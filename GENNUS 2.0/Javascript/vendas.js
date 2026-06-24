@@ -1,662 +1,1053 @@
+/* =========================================================
+   Gennus ERP — Gestão de Vendas
 
-/**
- * venda.js — Gestão de Vendas — Gennus
- * Dados simulados, filtros, busca, paginação e linhas expansíveis.
- * Sem localStorage / backend.
- */
+   Sem localStorage.
+   Sem alert de erro de backend.
+   Pronto para backend real.
+   Com fallback mockado para apresentação.
 
-'use strict';
+   Rotas esperadas:
+   GET    /api/vendas?periodo=7d
+   POST   /api/vendas
+   PUT    /api/vendas/:id
+   PATCH  /api/vendas/:id/cancelar
+   GET    /api/vendas/exportar?periodo=7d
+========================================================= */
 
-/* ================================================
-   1. CONSTANTES DE DOMÍNIO
-================================================ */
-const NOMES = [
-  'Ana Souza','Carlos Lima','Mariana Costa','Pedro Alves','Juliana Rocha',
-  'Roberto Mendes','Fernanda Silva','Lucas Pereira','Camila Santos','Thiago Ferreira',
-  'Beatriz Oliveira','Diego Martins','Larissa Nunes','Felipe Carvalho','Isabela Gomes',
-  'Gustavo Ramos','Tatiana Melo','Rodrigo Freitas','Aline Barbosa','Mateus Ribeiro',
-  'Priscila Teixeira','Leonardo Azevedo','Vanessa Pinto','André Correia','Natalia Fonseca',
-  'Vitor Cardoso','Letícia Matos','Bruno Moreira','Raquel Monteiro','Claudio Vieira',
-];
+(() => {
+  "use strict";
 
-const PRODUTOS = [
-  { nome: 'Produto Alpha',  preco: 349 },
-  { nome: 'Produto Beta',   preco: 289 },
-  { nome: 'Produto Gamma',  preco: 198 },
-  { nome: 'Produto Delta',  preco: 427 },
-  { nome: 'Produto Epsilon',preco: 156 },
-  { nome: 'Produto Zeta',   preco: 512 },
-  { nome: 'Produto Eta',    preco: 234 },
-  { nome: 'Produto Theta',  preco: 88  },
-];
+  const API = "/api/vendas";
+  const PAGE_SIZE = 8;
+  const USE_MOCK_FALLBACK = true;
 
-const CANAIS = ['online','whatsapp','presencial','marketplace'];
-const CANAL_LABELS = { online:'Loja Online', whatsapp:'WhatsApp', presencial:'Presencial', marketplace:'Marketplace' };
+  const $ = (id) => document.getElementById(id);
 
-const STATUS = ['concluido','concluido','concluido','pendente','processando','cancelado'];
-// concluido repetido 3x → ~50% das vendas concluídas
+  const dom = {
+    btnNova: $("btn-nova-venda"),
+    btnExport: $("btn-export"),
 
-const PAGAMENTOS = ['Cartão de Crédito','Pix','Cartão de Débito','Boleto','Dinheiro'];
+    periodFilter: $("period-filter"),
+    search: $("search-input"),
+    searchClear: $("search-clear"),
+    statusPills: $("status-pills"),
+    canal: $("select-canal"),
+    tableSort: $("table-sort"),
 
-/* ================================================
-   2. GERADOR DE VENDAS SIMULADAS
-   Cria um array de N vendas com datas no intervalo [daysAgo, hoje].
-================================================ */
-let _seed = 42;
-function rand() {
-  /* LCG simples — determinístico por seed, não usa Math.random para repeatability */
-  _seed = (_seed * 1664525 + 1013904223) & 0xffffffff;
-  return ((_seed >>> 0) / 0xffffffff);
-}
-function randInt(min, max) { return Math.floor(rand() * (max - min + 1)) + min; }
-function pick(arr) { return arr[randInt(0, arr.length - 1)]; }
+    kpiFaturado: $("kpi-faturado"),
+    kpiFaturadoDelta: $("kpi-faturado-delta"),
+    kpiPedidos: $("kpi-pedidos"),
+    kpiPedidosDelta: $("kpi-pedidos-delta"),
+    kpiTicket: $("kpi-ticket"),
+    kpiTicketDelta: $("kpi-ticket-delta"),
+    kpiConcluidos: $("kpi-concluidos"),
+    kpiCancelados: $("kpi-cancelados"),
 
-function gerarVendas(count, daysAgo) {
-  _seed = 42 + daysAgo; // seed diferente por período
-  const agora  = Date.now();
-  const inicio = agora - daysAgo * 86_400_000;
-  const vendas = [];
+    count: $("table-count"),
+    tbody: $("venda-tbody"),
+    empty: $("empty-state"),
+    pagination: $("pagination"),
+    prev: $("pag-prev"),
+    next: $("pag-next"),
+    pages: $("pag-pages"),
 
-  for (let i = 0; i < count; i++) {
-    /* Itens do pedido: 1 a 3 produtos */
-    const numItens  = randInt(1, 3);
-    const itens     = [];
-    let   total     = 0;
-    const usados    = new Set();
-    for (let j = 0; j < numItens; j++) {
-      let prod;
-      do { prod = pick(PRODUTOS); } while (usados.has(prod.nome));
-      usados.add(prod.nome);
-      const qtd  = randInt(1, 4);
-      const sub  = prod.preco * qtd;
-      itens.push({ nome: prod.nome, qtd, valor: sub });
-      total += sub;
-    }
+    modal: $("venda-modal"),
+    modalTitle: $("venda-modal-title"),
+    btnFecharModal: $("btn-fechar-venda-modal"),
+    btnCancelarForm: $("btn-cancelar-form-venda"),
+    form: $("form-venda"),
 
-    const ts     = inicio + rand() * (agora - inicio);
-    const data   = new Date(ts);
-    const canal  = pick(CANAIS);
-    const status = pick(STATUS);
-    const cliente= pick(NOMES);
-    const email  = cliente.toLowerCase().replace(' ', '.') + '@email.com';
+    vendaId: $("venda-id"),
+    cliente: $("venda-cliente"),
+    email: $("venda-email"),
+    canalForm: $("venda-canal"),
+    statusForm: $("venda-status"),
+    dataForm: $("venda-data"),
+    pagamento: $("venda-pagamento"),
+    produtoList: $("produto-venda-list"),
+    btnAddProduto: $("btn-add-produto-venda"),
+    desconto: $("venda-desconto"),
+    frete: $("venda-frete"),
+    totalPreview: $("venda-total-preview"),
+    observacao: $("venda-observacao"),
 
-    vendas.push({
-      id:        'GEN-' + String(10000 + i).padStart(5, '0'),
-      cliente,
-      email,
-      canal,
-      status,
-      total,
-      itens,
-      pagamento: pick(PAGAMENTOS),
-      data,
-      timestamp: ts,
-    });
-  }
-
-  /* Ordena por data decrescente */
-  return vendas.sort((a, b) => b.timestamp - a.timestamp);
-}
-
-/* ================================================
-   3. CONFIGURAÇÃO DOS PERÍODOS
-================================================ */
-const PERIODOS = {
-  '7d':  { label: '7 dias',    dias: 7,   count: 48,  antCount: 38  },
-  '30d': { label: '30 dias',   dias: 30,  count: 180, antCount: 148 },
-  '90d': { label: '3 meses',   dias: 90,  count: 512, antCount: 430 },
-  '1y':  { label: '1 ano',     dias: 365, count: 2210,antCount: 1890 },
-};
-
-/* ================================================
-   4. ESTADO DA APLICAÇÃO
-================================================ */
-const state = {
-  period:      '7d',
-  todasVendas: [],
-  filtradas:   [],
-  search:      '',
-  status:      'todos',
-  canal:       'todos',
-  sort:        { campo: 'data', dir: 'desc' },
-  pagina:      1,
-  porPagina:   10,
-  expandido:   null,
-};
-
-/* ================================================
-   5. HELPERS
-================================================ */
-const fmtBRL = n => 'R$ ' + Math.round(n).toLocaleString('pt-BR');
-const fmtNum = n => Math.round(n).toLocaleString('pt-BR');
-const fmtPct = n => (n * 100).toFixed(1).replace('.', ',') + '%';
-const delta  = (a, b) => (a - b) / b;
-
-function fmtData(d) {
-  return d.toLocaleDateString('pt-BR', { day:'2-digit', month:'short', year:'2-digit' });
-}
-function fmtDataHora(d) {
-  return d.toLocaleDateString('pt-BR', { day:'2-digit', month:'short' })
-    + ' · ' + d.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
-}
-
-function countUp(el, target, formatter, duration = 600) {
-  if (!el) return;
-  const start = performance.now();
-  const step  = now => {
-    const t = Math.min((now - start) / duration, 1);
-    const e = 1 - Math.pow(1 - t, 3);
-    el.textContent = formatter(target * e);
-    if (t < 1) requestAnimationFrame(step);
+    cancelModal: $("cancelar-venda-modal"),
+    btnFecharCancel: $("btn-fechar-cancelar-modal"),
+    btnVoltarCancel: $("btn-voltar-cancelamento"),
+    btnConfirmarCancel: $("btn-confirmar-cancelamento"),
+    cancelId: $("cancelar-venda-id"),
+    cancelMotivo: $("cancelar-venda-motivo")
   };
-  requestAnimationFrame(step);
-}
 
-/* ================================================
-   6. RENDERIZAÇÃO DE KPIs
-================================================ */
-function renderKPIs() {
-  const d     = PERIODOS[state.period];
-  const v     = state.todasVendas;
-  const total = v.reduce((s, x) => s + x.total, 0);
-  const ticket= v.length ? total / v.length : 0;
-  const concl = v.filter(x => x.status === 'concluido').length;
-  const canc  = v.filter(x => x.status === 'cancelado').length;
+  const state = {
+    vendas: [],
+    periodo: "7d",
+    busca: "",
+    status: "todos",
+    canal: "todos",
+    sort: "data",
+    dir: "desc",
+    page: 1,
+    expandedId: null,
+    usandoMock: false
+  };
 
-  /* Simula período anterior (ratio fixo por período) */
-  const ratio = d.antCount / d.count;
-  const antTotal  = total  * ratio * 0.88;
-  const antPedidos= d.antCount;
-  const antTicket = ticket * 0.93;
+  const statusText = {
+    concluido: "Concluído",
+    pendente: "Pendente",
+    processando: "Processando",
+    cancelado: "Cancelado"
+  };
 
-  countUp(document.getElementById('kpi-faturado'),  total,  fmtBRL);
-  countUp(document.getElementById('kpi-pedidos'),   v.length, n => fmtNum(Math.round(n)));
-  countUp(document.getElementById('kpi-ticket'),    ticket, fmtBRL);
-  countUp(document.getElementById('kpi-concluidos'),concl / (v.length || 1),
-    n => (n * 100).toFixed(1).replace('.', ',') + '%');
-  countUp(document.getElementById('kpi-cancelados'), canc / (v.length || 1),
-    n => (n * 100).toFixed(1).replace('.', ',') + '%');
+  const canalText = {
+    online: "Loja Online",
+    whatsapp: "WhatsApp",
+    presencial: "Presencial",
+    marketplace: "Marketplace"
+  };
 
-  renderDelta('kpi-faturado-delta', delta(total,     antTotal));
-  renderDelta('kpi-pedidos-delta',  delta(v.length,  antPedidos));
-  renderDelta('kpi-ticket-delta',   delta(ticket,    antTicket));
-}
+  const pagamentoText = {
+    pix: "Pix",
+    credito: "Cartão de crédito",
+    debito: "Cartão de débito",
+    dinheiro: "Dinheiro",
+    boleto: "Boleto"
+  };
 
-function renderDelta(id, val) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  const pos = val >= 0;
-  el.textContent = `${pos ? '+' : ''}${fmtPct(Math.abs(val))} vs. anterior`;
-  el.className   = 'kpi-delta ' + (pos ? 'pos' : 'neg');
-}
-
-/* ================================================
-   7. FILTRAGEM + ORDENAÇÃO
-================================================ */
-function aplicarFiltros() {
-  let resultado = [...state.todasVendas];
-
-  /* Busca */
-  if (state.search) {
-    const q = state.search.toLowerCase();
-    resultado = resultado.filter(v =>
-      v.id.toLowerCase().includes(q)         ||
-      v.cliente.toLowerCase().includes(q)    ||
-      v.email.toLowerCase().includes(q)      ||
-      v.itens.some(it => it.nome.toLowerCase().includes(q))
-    );
-  }
-
-  /* Status */
-  if (state.status !== 'todos') {
-    resultado = resultado.filter(v => v.status === state.status);
-  }
-
-  /* Canal */
-  if (state.canal !== 'todos') {
-    resultado = resultado.filter(v => v.canal === state.canal);
-  }
-
-  /* Ordenação */
-  resultado.sort((a, b) => {
-    let va, vb;
-    if (state.sort.campo === 'data')  { va = a.timestamp; vb = b.timestamp; }
-    if (state.sort.campo === 'valor') { va = a.total;     vb = b.total; }
-    return state.sort.dir === 'desc' ? vb - va : va - vb;
-  });
-
-  state.filtradas = resultado;
-  state.pagina    = 1;
-}
-
-/* ================================================
-   8. RENDERIZAÇÃO DA TABELA
-================================================ */
-function renderTabela() {
-  const tbody    = document.getElementById('venda-tbody');
-  const countEl  = document.getElementById('table-count');
-  const emptyEl  = document.getElementById('empty-state');
-  if (!tbody) return;
-
-  const total    = state.filtradas.length;
-  const inicio   = (state.pagina - 1) * state.porPagina;
-  const pagina   = state.filtradas.slice(inicio, inicio + state.porPagina);
-
-  /* Contador */
-  if (countEl) {
-    countEl.textContent = total === 0
-      ? 'Nenhum resultado'
-      : `${total.toLocaleString('pt-BR')} pedido${total !== 1 ? 's' : ''}`;
-  }
-
-  /* Estado vazio */
-  if (emptyEl) emptyEl.style.display = total === 0 ? 'flex' : 'none';
-
-  /* Reseta expand se a linha não está mais na página */
-  tbody.innerHTML = '';
-  state.expandido = null;
-
-  pagina.forEach((venda, idx) => {
-    /* Linha principal */
-    const tr = document.createElement('tr');
-    tr.className = 'venda-row';
-    tr.dataset.id = venda.id;
-
-    const canalClass = 'canal-' + venda.canal;
-    const statusClass = 'status-' + venda.status;
-    const statusLabel = { concluido:'Concluído', pendente:'Pendente', processando:'Processando', cancelado:'Cancelado' }[venda.status];
-    const produto1 = venda.itens[0].nome;
-    const maisItens = venda.itens.length > 1 ? `<span class="produto-mais">+${venda.itens.length - 1}</span>` : '';
-
-    tr.innerHTML = `
-      <td><span class="pedido-num">${venda.id}</span></td>
-      <td>
-        <div class="cliente-nome">${venda.cliente}</div>
-        <div class="cliente-email">${venda.email}</div>
-      </td>
-      <td><span class="produto-nome">${produto1}</span>${maisItens}</td>
-      <td><span class="canal-badge ${canalClass}">${CANAL_LABELS[venda.canal]}</span></td>
-      <td class="venda-valor">${fmtBRL(venda.total)}</td>
-      <td style="text-align:right"><span class="status-badge ${statusClass}">${statusLabel}</span></td>
-      <td class="venda-data">${fmtData(venda.data)}</td>
-      <td class="expand-arrow">▾</td>
-    `;
-
-    /* Linha de detalhe (sempre criada, começa fechada) */
-    const trDetail = document.createElement('tr');
-    trDetail.className = 'expand-row';
-    trDetail.dataset.for = venda.id;
-
-    const tdDetail = document.createElement('td');
-    tdDetail.colSpan = 8;
-
-    const content = document.createElement('div');
-    content.className = 'expand-content';
-    content.innerHTML = buildExpandContent(venda);
-
-    tdDetail.appendChild(content);
-    trDetail.appendChild(tdDetail);
-
-    /* Animação de entrada staggerada */
-    tr.style.opacity   = '0';
-    tr.style.transform = 'translateY(6px)';
-    tr.style.transition = `opacity 0.28s ease ${idx * 35}ms, transform 0.28s ease ${idx * 35}ms`;
-
-    tbody.appendChild(tr);
-    tbody.appendChild(trDetail);
-
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      tr.style.opacity   = '1';
-      tr.style.transform = 'translateY(0)';
-    }));
-
-    /* Evento de clique para expandir */
-    tr.addEventListener('click', () => toggleExpand(venda.id, tr, content));
-  });
-
-  renderPaginacao();
-}
-
-/* ================================================
-   9. CONTEÚDO DO EXPAND (HTML interno)
-================================================ */
-function buildExpandContent(venda) {
-  /* Seção 1: Itens */
-  const itensHTML = venda.itens.map(it => `
-    <div class="expand-item">
-      <span class="expand-item-nome">${it.nome}</span>
-      <span class="expand-item-qtd">×${it.qtd}</span>
-      <span class="expand-item-val">${fmtBRL(it.valor)}</span>
-    </div>
-  `).join('');
-
-  /* Seção 2: Pagamento e canal */
-  const infoHTML = `
-    <div class="expand-info-row">
-      <span class="expand-info-label">Forma de Pagamento</span>
-      <span class="expand-info-val">${venda.pagamento}</span>
-    </div>
-    <div class="expand-info-row">
-      <span class="expand-info-label">Canal de Origem</span>
-      <span class="expand-info-val">${CANAL_LABELS[venda.canal]}</span>
-    </div>
-    <div class="expand-info-row">
-      <span class="expand-info-label">Data e Hora</span>
-      <span class="expand-info-val">${fmtDataHora(venda.data)}</span>
-    </div>
-    <div class="expand-info-row">
-      <span class="expand-info-label">Total do Pedido</span>
-      <span class="expand-info-val" style="color:var(--verde);font-weight:700">${fmtBRL(venda.total)}</span>
-    </div>
-  `;
-
-  /* Seção 3: Timeline */
-  const steps = buildTimeline(venda.status, venda.data);
-  const timelineHTML = steps.map(s => `
-    <div class="timeline-step">
-      <div class="timeline-dot ${s.classe}"></div>
-      <div class="timeline-text">
-        <span class="timeline-label">${s.label}</span>
-        <span class="timeline-date">${s.data}</span>
-      </div>
-    </div>
-  `).join('');
-
-  return `
-    <div class="expand-section">
-      <div class="expand-section-title">Itens do Pedido</div>
-      <div class="expand-items">${itensHTML}</div>
-    </div>
-    <div class="expand-section">
-      <div class="expand-section-title">Informações</div>
-      ${infoHTML}
-    </div>
-    <div class="expand-section">
-      <div class="expand-section-title">Histórico de Status</div>
-      <div class="expand-timeline">${timelineHTML}</div>
-    </div>
-  `;
-}
-
-function buildTimeline(status, data) {
-  const base = new Date(data);
-  const add  = h => new Date(base.getTime() + h * 3_600_000);
-  const fmt  = d => fmtDataHora(d);
-
-  const todos = [
-    { label: 'Pedido Recebido',   data: fmt(base),     classe: 'done' },
-    { label: 'Pagamento Aprovado',data: fmt(add(0.5)),  classe: 'done' },
-    { label: 'Em Separação',      data: fmt(add(2)),    classe: status === 'concluido' || status === 'processando' ? 'done' : 'pending' },
-    { label: 'Enviado',           data: fmt(add(6)),    classe: status === 'concluido' ? 'done' : status === 'processando' ? 'current' : 'pending' },
-    { label: 'Entregue',          data: fmt(add(24)),   classe: status === 'concluido' ? 'done' : 'pending' },
+  const mockVendas = [
+    vendaMock("PED-00081", "Maria Souza", "maria@email.com", "whatsapp", "concluido", "pix", "2026-06-23T19:42", [
+      ["Produto Alpha", 2, 180],
+      ["Cabo USB-C", 1, 39.9]
+    ]),
+    vendaMock("PED-00080", "João Pereira", "joao@email.com", "online", "processando", "credito", "2026-06-23T16:18", [
+      ["Produto Beta", 1, 490]
+    ]),
+    vendaMock("PED-00079", "Camila Rocha", "camila@email.com", "marketplace", "pendente", "boleto", "2026-06-22T12:05", [
+      ["Produto Gamma", 3, 89.9]
+    ]),
+    vendaMock("PED-00078", "Pedro Lima", "pedro@email.com", "presencial", "concluido", "dinheiro", "2026-06-22T10:31", [
+      ["Produto Delta", 1, 520],
+      ["Outros", 2, 45]
+    ]),
+    vendaMock("PED-00077", "Ana Martins", "ana@email.com", "online", "cancelado", "credito", "2026-06-21T18:15", [
+      ["Produto Alpha", 1, 180]
+    ], "Cliente desistiu da compra."),
+    vendaMock("PED-00076", "Lucas Alves", "lucas@email.com", "whatsapp", "concluido", "pix", "2026-06-21T14:22", [
+      ["Produto Beta", 2, 490]
+    ]),
+    vendaMock("PED-00075", "Fernanda Dias", "fernanda@email.com", "online", "concluido", "debito", "2026-06-20T09:44", [
+      ["Produto Gamma", 5, 89.9]
+    ]),
+    vendaMock("PED-00074", "Rafael Costa", "rafael@email.com", "marketplace", "processando", "credito", "2026-06-19T20:10", [
+      ["Produto Alpha", 1, 180],
+      ["Produto Delta", 1, 520]
+    ]),
+    vendaMock("PED-00073", "Beatriz Melo", "bia@email.com", "presencial", "concluido", "dinheiro", "2026-06-18T11:30", [
+      ["Outros", 4, 35]
+    ]),
+    vendaMock("PED-00072", "Gustavo Nunes", "gustavo@email.com", "whatsapp", "pendente", "pix", "2026-06-17T15:50", [
+      ["Produto Beta", 1, 490]
+    ])
   ];
 
-  if (status === 'cancelado') {
-    return [
-      { label: 'Pedido Recebido', data: fmt(base),     classe: 'done' },
-      { label: 'Cancelado',       data: fmt(add(1)),   classe: 'done' },
-    ];
+  init();
+
+  function init() {
+    bindEvents();
+    carregarVendas();
   }
 
-  if (status === 'pendente') {
-    return [
-      { label: 'Pedido Recebido',    data: fmt(base),   classe: 'done' },
-      { label: 'Aguardando Pagamento',data: fmt(add(0.2)),classe: 'current' },
-      { label: 'Em Separação',       data: '—',          classe: 'pending' },
-      { label: 'Entregue',           data: '—',          classe: 'pending' },
-    ];
+  function bindEvents() {
+    dom.btnNova.addEventListener("click", abrirNovaVenda);
+    dom.btnExport.addEventListener("click", exportarVendas);
+
+    dom.periodFilter.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-period]");
+      if (!btn) return;
+
+      state.periodo = btn.dataset.period;
+      state.page = 1;
+      ativarPeriodo();
+      carregarVendas();
+    });
+
+    dom.search.addEventListener("input", debounce((event) => {
+      state.busca = event.target.value;
+      state.page = 1;
+      render();
+    }, 250));
+
+    dom.searchClear.addEventListener("click", () => {
+      state.busca = "";
+      state.page = 1;
+      dom.search.value = "";
+      dom.search.focus();
+      render();
+    });
+
+    dom.statusPills.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-status]");
+      if (!btn) return;
+
+      state.status = btn.dataset.status;
+      state.page = 1;
+      render();
+    });
+
+    dom.canal.addEventListener("change", (event) => {
+      state.canal = event.target.value;
+      state.page = 1;
+      render();
+    });
+
+    dom.tableSort.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-sort]");
+      if (!btn) return;
+
+      const sameSort = state.sort === btn.dataset.sort;
+
+      state.sort = btn.dataset.sort;
+      state.dir = sameSort && state.dir === "desc" ? "asc" : "desc";
+      state.page = 1;
+
+      render();
+    });
+
+    dom.prev.addEventListener("click", () => {
+      if (state.page > 1) {
+        state.page -= 1;
+        render();
+      }
+    });
+
+    dom.next.addEventListener("click", () => {
+      const totalPages = getTotalPages(getVendasFiltradas().length);
+
+      if (state.page < totalPages) {
+        state.page += 1;
+        render();
+      }
+    });
+
+    dom.pages.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-page]");
+      if (!btn) return;
+
+      state.page = Number(btn.dataset.page);
+      render();
+    });
+
+    dom.tbody.addEventListener("click", (event) => {
+      const editBtn = event.target.closest("[data-edit]");
+      const cancelBtn = event.target.closest("[data-cancel]");
+      const row = event.target.closest("[data-row-id]");
+
+      if (editBtn) {
+        abrirEditarVenda(editBtn.dataset.edit);
+        return;
+      }
+
+      if (cancelBtn) {
+        abrirCancelarVenda(cancelBtn.dataset.cancel);
+        return;
+      }
+
+      if (row) {
+        alternarDetalhe(row.dataset.rowId);
+      }
+    });
+
+    dom.btnFecharModal.addEventListener("click", fecharVendaModal);
+    dom.btnCancelarForm.addEventListener("click", fecharVendaModal);
+    dom.modal.addEventListener("click", fecharAoClicarFora);
+    dom.form.addEventListener("submit", salvarVenda);
+
+    dom.btnAddProduto.addEventListener("click", () => adicionarProdutoRow());
+    dom.produtoList.addEventListener("click", removerProdutoRow);
+    dom.produtoList.addEventListener("input", atualizarPreviewTotal);
+    dom.desconto.addEventListener("input", atualizarPreviewTotal);
+    dom.frete.addEventListener("input", atualizarPreviewTotal);
+
+    dom.btnFecharCancel.addEventListener("click", fecharCancelarModal);
+    dom.btnVoltarCancel.addEventListener("click", fecharCancelarModal);
+    dom.cancelModal.addEventListener("click", fecharAoClicarFora);
+    dom.btnConfirmarCancel.addEventListener("click", confirmarCancelamento);
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        fecharVendaModal();
+        fecharCancelarModal();
+      }
+    });
   }
 
-  return todos;
-}
+  async function carregarVendas() {
+    setLoading();
 
-/* ================================================
-   10. EXPANDIR / RECOLHER LINHA
-================================================ */
-function toggleExpand(id, tr, content) {
-  const estaAberto = state.expandido === id;
+    try {
+      const data = await request(`${API}?periodo=${encodeURIComponent(state.periodo)}`);
+      state.vendas = normalizarResposta(data);
+      state.usandoMock = false;
+    } catch (error) {
+      console.error(error);
 
-  /* Fecha o que estava aberto */
-  if (state.expandido) {
-    const prevTr      = document.querySelector(`.venda-row[data-id="${state.expandido}"]`);
-    const prevContent = document.querySelector(`.expand-row[data-for="${state.expandido}"] .expand-content`);
-    if (prevTr)      prevTr.classList.remove('active-row');
-    if (prevContent) prevContent.classList.remove('open');
-    state.expandido = null;
-  }
-
-  /* Abre o novo (se não era o mesmo) */
-  if (!estaAberto) {
-    tr.classList.add('active-row');
-    content.classList.add('open');
-    state.expandido = id;
-  }
-}
-
-/* ================================================
-   11. PAGINAÇÃO
-================================================ */
-function renderPaginacao() {
-  const total   = state.filtradas.length;
-  const paginas = Math.ceil(total / state.porPagina);
-  const atual   = state.pagina;
-
-  const prev     = document.getElementById('pag-prev');
-  const next     = document.getElementById('pag-next');
-  const pagesEl  = document.getElementById('pag-pages');
-  const pagEl    = document.getElementById('pagination');
-
-  if (pagEl) pagEl.style.display = paginas <= 1 ? 'none' : 'flex';
-  if (prev)  prev.disabled = atual === 1;
-  if (next)  next.disabled = atual === paginas;
-  if (!pagesEl) return;
-
-  pagesEl.innerHTML = '';
-
-  /* Janela de 5 páginas ao redor da atual */
-  let ini = Math.max(1, atual - 2);
-  let fim = Math.min(paginas, ini + 4);
-  if (fim - ini < 4) ini = Math.max(1, fim - 4);
-
-  for (let p = ini; p <= fim; p++) {
-    const btn = document.createElement('button');
-    btn.className  = 'pag-num' + (p === atual ? ' active' : '');
-    btn.textContent = p;
-    btn.addEventListener('click', () => { state.pagina = p; renderTabela(); });
-    pagesEl.appendChild(btn);
-  }
-}
-
-/* ================================================
-   12. RENDER PRINCIPAL
-================================================ */
-function render(period) {
-  state.period      = period;
-  state.todasVendas = gerarVendas(PERIODOS[period].count, PERIODOS[period].dias);
-  state.expandido   = null;
-  aplicarFiltros();
-  renderKPIs();
-  renderTabela();
-}
-
-/* ================================================
-   13. EVENTOS E INIT
-================================================ */
-function initEvents() {
-
-  /* Filtro de período */
-  document.getElementById('period-filter')?.addEventListener('click', e => {
-    const btn = e.target.closest('.period-btn');
-    if (!btn) return;
-    document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-
-    const cards = document.querySelectorAll('.venda-table-card, .venda-kpis');
-    cards.forEach(c => { c.style.transition = 'opacity 0.18s'; c.style.opacity = '0.35'; });
-    setTimeout(() => {
-      render(btn.dataset.period);
-      cards.forEach(c => { c.style.opacity = '1'; });
-    }, 180);
-  });
-
-  /* Pills de status */
-  document.getElementById('status-pills')?.addEventListener('click', e => {
-    const pill = e.target.closest('.pill');
-    if (!pill) return;
-    document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
-    pill.classList.add('active');
-    state.status = pill.dataset.status;
-    aplicarFiltros();
-    renderTabela();
-  });
-
-  /* Select de canal */
-  document.getElementById('select-canal')?.addEventListener('change', e => {
-    state.canal = e.target.value;
-    aplicarFiltros();
-    renderTabela();
-  });
-
-  /* Busca */
-  const searchInput = document.getElementById('search-input');
-  const searchClear = document.getElementById('search-clear');
-
-  searchInput?.addEventListener('input', () => {
-    state.search = searchInput.value.trim();
-    if (searchClear) searchClear.style.display = state.search ? 'block' : 'none';
-    aplicarFiltros();
-    renderTabela();
-  });
-
-  searchClear?.addEventListener('click', () => {
-    searchInput.value = '';
-    state.search = '';
-    searchClear.style.display = 'none';
-    searchInput.focus();
-    aplicarFiltros();
-    renderTabela();
-  });
-
-  /* Ordenação */
-  document.getElementById('table-sort')?.addEventListener('click', e => {
-    const btn = e.target.closest('.sort-btn');
-    if (!btn) return;
-
-    const campo = btn.dataset.sort;
-    if (state.sort.campo === campo) {
-      state.sort.dir = state.sort.dir === 'desc' ? 'asc' : 'desc';
-    } else {
-      state.sort.campo = campo;
-      state.sort.dir   = 'desc';
+      if (USE_MOCK_FALLBACK) {
+        state.vendas = mockVendas.map(normalizarVenda);
+        state.usandoMock = true;
+      } else {
+        state.vendas = [];
+      }
     }
 
-    document.querySelectorAll('.sort-btn').forEach(b => {
-      b.classList.remove('active');
-      b.querySelector('.sort-arrow').textContent = '↕';
+    render();
+  }
+
+  async function request(url, options = {}) {
+    const response = await fetch(url, {
+      method: options.method || "GET",
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...options.headers
+      },
+      body: options.body
     });
-    btn.classList.add('active');
-    btn.querySelector('.sort-arrow').textContent = state.sort.dir === 'desc' ? '↓' : '↑';
 
-    aplicarFiltros();
-    renderTabela();
-  });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
 
-  /* Paginação */
-  document.getElementById('pag-prev')?.addEventListener('click', () => {
-    if (state.pagina > 1) { state.pagina--; renderTabela(); }
-  });
-  document.getElementById('pag-next')?.addEventListener('click', () => {
-    const max = Math.ceil(state.filtradas.length / state.porPagina);
-    if (state.pagina < max) { state.pagina++; renderTabela(); }
-  });
+    if (response.status === 204) {
+      return null;
+    }
 
-  /* Exportar (visual) */
-  document.getElementById('btn-export')?.addEventListener('click', () => {
-    const btn = document.getElementById('btn-export');
-    const orig = btn.innerHTML;
-    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="animation:spin 0.8s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Exportando…';
-    btn.disabled = true;
-    setTimeout(() => {
-      btn.innerHTML = orig;
-      btn.disabled  = false;
-    }, 1800);
-  });
-}
+    return response.json();
+  }
 
-document.addEventListener('DOMContentLoaded', () => {
-  render('7d');
-  initEvents();
+  function normalizarResposta(data) {
+    const lista = Array.isArray(data) ? data : data?.vendas;
 
-document.addEventListener("DOMContentLoaded", () => {
-    const formVenda = document.getElementById("venda-form");
-    const selectProd = document.getElementById("venda-produto");
-    const listaVendasHtml = document.getElementById("lista-vendas-dia"));
+    return Array.isArray(lista)
+      ? lista.map(normalizarVenda)
+      : [];
+  }
 
-    let produtos = JSON.parse(localStorage.getItem("gennus_prods")) || [];
-    let vendas = JSON.parse(localStorage.getItem("gennus_vendas")) || [];
+  function normalizarVenda(venda) {
+    const produtos = Array.isArray(venda.produtos)
+      ? venda.produtos.map((item) => ({
+          nome: String(item.nome ?? "Produto sem nome"),
+          quantidade: Math.max(parseInt(item.quantidade ?? 1, 10), 1),
+          valorUnitario: num(item.valorUnitario ?? item.valor ?? 0)
+        }))
+      : [];
 
-    function atualizarSelect() {
-        if (!selectProd) return;
-        selectProd.innerHTML = '<option value="">Selecione um produto</option>';
-        produtos.forEach((p, index) => {
-            if (p.estoque > 0) {
-                selectProd.innerHTML += `<option value="${index}">${p.nome} (Disp: ${p.estoque} ${p.unidade})</option>`;
-            }
-        });
-    }};
+    const subtotal = produtos.reduce((soma, item) => {
+      return soma + item.quantidade * item.valorUnitario;
+    }, 0);
 
-    formVenda.addEventListener("submit", (e) => {
-        e.preventDefault();
-        const indexProd = selectProd.value;
-        const qtdVendida = parseFloat(document.getElementById("venda-qtd").value);
-        
-        if (indexProd === "") return alert("Selecione um produto!");
+    const desconto = num(venda.desconto);
+    const frete = num(venda.frete);
+    const valorTotal = venda.valorTotal === undefined
+      ? Math.max(subtotal - desconto + frete, 0)
+      : num(venda.valorTotal);
 
-        const produto = produtos[indexProd];
+    return {
+      id: String(venda.id ?? gerarPedidoId()),
+      cliente: {
+        nome: String(venda.cliente?.nome ?? venda.clienteNome ?? venda.cliente ?? "Cliente sem nome"),
+        email: String(venda.cliente?.email ?? venda.clienteEmail ?? venda.email ?? "")
+      },
+      produtos,
+      canal: String(venda.canal ?? "online"),
+      status: String(venda.status ?? "pendente"),
+      pagamento: String(venda.pagamento ?? "pix"),
+      data: String(venda.data ?? new Date().toISOString()),
+      desconto,
+      frete,
+      valorTotal,
+      observacao: String(venda.observacao ?? ""),
+      motivoCancelamento: String(venda.motivoCancelamento ?? "")
+    };
+  }
 
-        if (qtdVendida > produto.estoque) {
-            alert("Erro: Estoque insuficiente!");
-            return;
+  function render() {
+    const filtradas = getVendasFiltradas();
+    const pageItems = getPageItems(filtradas);
+
+    renderKPIs();
+    renderTabela(pageItems, filtradas.length);
+    renderPaginacao(filtradas.length);
+    renderControles();
+    renderSort();
+  }
+
+  function renderKPIs() {
+    const totalPedidos = state.vendas.length;
+    const concluidos = state.vendas.filter((v) => v.status === "concluido");
+    const cancelados = state.vendas.filter((v) => v.status === "cancelado");
+
+    const faturado = concluidos.reduce((soma, venda) => soma + venda.valorTotal, 0);
+    const ticket = concluidos.length ? faturado / concluidos.length : 0;
+    const taxaCancelamento = totalPedidos ? (cancelados.length / totalPedidos) * 100 : 0;
+
+    dom.kpiFaturado.textContent = money(faturado);
+    dom.kpiFaturadoDelta.textContent = "+0,0% vs. anterior";
+    dom.kpiFaturadoDelta.className = "kpi-delta pos";
+
+    dom.kpiPedidos.textContent = totalPedidos;
+    dom.kpiPedidosDelta.textContent = "+0,0% vs. anterior";
+    dom.kpiPedidosDelta.className = "kpi-delta pos";
+
+    dom.kpiTicket.textContent = money(ticket);
+    dom.kpiTicketDelta.textContent = "+0,0% vs. anterior";
+    dom.kpiTicketDelta.className = "kpi-delta pos";
+
+    dom.kpiConcluidos.textContent = concluidos.length;
+    dom.kpiCancelados.textContent = `${taxaCancelamento.toFixed(1)}%`;
+  }
+
+  function renderTabela(lista, total) {
+    dom.count.textContent = `${total} ${total === 1 ? "pedido" : "pedidos"}`;
+    dom.empty.style.display = total ? "none" : "flex";
+    dom.pagination.style.display = total > PAGE_SIZE ? "flex" : "none";
+
+    dom.tbody.innerHTML = lista.map(vendaHTML).join("");
+  }
+
+  function vendaHTML(venda) {
+    const expanded = state.expandedId === venda.id;
+    const primeiroProduto = venda.produtos[0]?.nome ?? "Sem produtos";
+    const extras = venda.produtos.length > 1 ? `<span class="produto-mais">+${venda.produtos.length - 1}</span>` : "";
+    const podeEditar = venda.status === "pendente" || venda.status === "processando";
+    const podeCancelar = venda.status !== "cancelado";
+
+    return `
+      <tr class="venda-row ${expanded ? "active-row" : ""}" data-row-id="${escapeAttr(venda.id)}">
+        <td><span class="pedido-num">${escapeHTML(venda.id)}</span></td>
+
+        <td>
+          <div class="cliente-nome">${escapeHTML(venda.cliente.nome)}</div>
+          <div class="cliente-email">${escapeHTML(venda.cliente.email)}</div>
+        </td>
+
+        <td>
+          <span class="produto-nome">${escapeHTML(primeiroProduto)}</span>
+          ${extras}
+        </td>
+
+        <td>
+          <span class="canal-badge canal-${escapeAttr(venda.canal)}">
+            ${escapeHTML(canalText[venda.canal] || venda.canal)}
+          </span>
+        </td>
+
+        <td class="venda-valor">${money(venda.valorTotal)}</td>
+
+        <td class="col-status">
+          <span class="status-badge status-${escapeAttr(venda.status)}">
+            ${escapeHTML(statusText[venda.status] || venda.status)}
+          </span>
+        </td>
+
+        <td class="venda-data">${formatDate(venda.data)}</td>
+
+        <td class="col-actions">
+          <div class="venda-actions">
+            <button class="action-btn edit" data-edit="${escapeAttr(venda.id)}" ${podeEditar ? "" : "disabled"} type="button">
+              Editar
+            </button>
+
+            <button class="action-btn cancel" data-cancel="${escapeAttr(venda.id)}" ${podeCancelar ? "" : "disabled"} type="button">
+              Cancelar
+            </button>
+          </div>
+        </td>
+
+        <td class="expand-arrow">⌄</td>
+      </tr>
+
+      <tr class="expand-row">
+        <td colspan="9">
+          <div class="expand-content ${expanded ? "open" : ""}">
+            ${detalheVendaHTML(venda)}
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  function detalheVendaHTML(venda) {
+    return `
+      <div class="expand-section">
+        <span class="expand-section-title">Itens do pedido</span>
+
+        <div class="expand-items">
+          ${venda.produtos.map((item) => `
+            <div class="expand-item">
+              <span class="expand-item-nome">${escapeHTML(item.nome)}</span>
+              <span class="expand-item-qtd">${item.quantidade}x</span>
+              <span class="expand-item-val">${money(item.quantidade * item.valorUnitario)}</span>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+
+      <div class="expand-section">
+        <span class="expand-section-title">Pagamento</span>
+
+        <div class="expand-info-row">
+          <span class="expand-info-label">Forma</span>
+          <span class="expand-info-val">${escapeHTML(pagamentoText[venda.pagamento] || venda.pagamento)}</span>
+        </div>
+
+        <div class="expand-info-row">
+          <span class="expand-info-label">Desconto</span>
+          <span class="expand-info-val">${money(venda.desconto)}</span>
+        </div>
+
+        <div class="expand-info-row">
+          <span class="expand-info-label">Frete</span>
+          <span class="expand-info-val">${money(venda.frete)}</span>
+        </div>
+
+        <div class="expand-info-row">
+          <span class="expand-info-label">Observação</span>
+          <span class="expand-info-val">${escapeHTML(venda.observacao || "—")}</span>
+        </div>
+      </div>
+
+      <div class="expand-section">
+        <span class="expand-section-title">Status</span>
+
+        <div class="expand-timeline">
+          ${timelineHTML(venda)}
+        </div>
+
+        ${venda.motivoCancelamento ? `
+          <div class="expand-info-row">
+            <span class="expand-info-label">Motivo do cancelamento</span>
+            <span class="expand-info-val">${escapeHTML(venda.motivoCancelamento)}</span>
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
+
+  function timelineHTML(venda) {
+    const fluxo = ["pendente", "processando", "concluido"];
+    const statusAtual = venda.status;
+    const indexAtual = fluxo.indexOf(statusAtual);
+
+    if (statusAtual === "cancelado") {
+      return `
+        <div class="timeline-step">
+          <span class="timeline-dot done"></span>
+          <div class="timeline-text">
+            <span class="timeline-label">Pedido criado</span>
+            <span class="timeline-date">${formatDate(venda.data)}</span>
+          </div>
+        </div>
+
+        <div class="timeline-step">
+          <span class="timeline-dot current"></span>
+          <div class="timeline-text">
+            <span class="timeline-label">Venda cancelada</span>
+            <span class="timeline-date">Histórico preservado</span>
+          </div>
+        </div>
+      `;
+    }
+
+    return fluxo.map((status, index) => {
+      const done = index < indexAtual;
+      const current = index === indexAtual;
+
+      return `
+        <div class="timeline-step">
+          <span class="timeline-dot ${done ? "done" : current ? "current" : "pending"}"></span>
+          <div class="timeline-text">
+            <span class="timeline-label">${escapeHTML(statusText[status])}</span>
+            <span class="timeline-date">${current ? formatDate(venda.data) : done ? "concluído" : "aguardando"}</span>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function renderPaginacao(total) {
+    const totalPages = getTotalPages(total);
+
+    dom.prev.disabled = state.page <= 1;
+    dom.next.disabled = state.page >= totalPages;
+
+    dom.pages.innerHTML = Array.from({ length: totalPages }, (_, index) => {
+      const page = index + 1;
+
+      return `
+        <button class="pag-num ${page === state.page ? "active" : ""}" data-page="${page}" type="button">
+          ${page}
+        </button>
+      `;
+    }).join("");
+  }
+
+  function renderControles() {
+    dom.searchClear.style.display = state.busca ? "block" : "none";
+    dom.canal.value = state.canal;
+
+    dom.statusPills.querySelectorAll("[data-status]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.status === state.status);
+    });
+  }
+
+  function renderSort() {
+    dom.tableSort.querySelectorAll("[data-sort]").forEach((btn) => {
+      const active = btn.dataset.sort === state.sort;
+      const arrow = active ? (state.dir === "desc" ? "↓" : "↑") : "↕";
+
+      btn.classList.toggle("active", active);
+      btn.dataset.dir = active ? state.dir : "desc";
+      btn.querySelector(".sort-arrow").textContent = arrow;
+    });
+  }
+
+  function getVendasFiltradas() {
+    const termo = normalize(state.busca);
+
+    return [...state.vendas]
+      .filter((venda) => {
+        const texto = normalize(`
+          ${venda.id}
+          ${venda.cliente.nome}
+          ${venda.cliente.email}
+          ${venda.produtos.map((p) => p.nome).join(" ")}
+        `);
+
+        const bateBusca = texto.includes(termo);
+        const bateStatus = state.status === "todos" || venda.status === state.status;
+        const bateCanal = state.canal === "todos" || venda.canal === state.canal;
+
+        return bateBusca && bateStatus && bateCanal;
+      })
+      .sort(sorter());
+  }
+
+  function sorter() {
+    return (a, b) => {
+      const mult = state.dir === "desc" ? -1 : 1;
+
+      if (state.sort === "valor") {
+        return (a.valorTotal - b.valorTotal) * mult;
+      }
+
+      return (new Date(a.data) - new Date(b.data)) * mult;
+    };
+  }
+
+  function getPageItems(lista) {
+    const start = (state.page - 1) * PAGE_SIZE;
+    return lista.slice(start, start + PAGE_SIZE);
+  }
+
+  function getTotalPages(total) {
+    return Math.max(Math.ceil(total / PAGE_SIZE), 1);
+  }
+
+  function abrirNovaVenda() {
+    dom.form.reset();
+    dom.vendaId.value = "";
+    dom.modalTitle.textContent = "Nova Venda";
+    dom.dataForm.value = toDatetimeLocal(new Date());
+    resetProdutoRows();
+    atualizarPreviewTotal();
+    abrirModal(dom.modal);
+  }
+
+  function abrirEditarVenda(id) {
+    const venda = state.vendas.find((item) => item.id === id);
+    if (!venda) return;
+
+    dom.form.reset();
+    dom.modalTitle.textContent = "Editar Venda";
+
+    dom.vendaId.value = venda.id;
+    dom.cliente.value = venda.cliente.nome;
+    dom.email.value = venda.cliente.email;
+    dom.canalForm.value = venda.canal;
+    dom.statusForm.value = venda.status;
+    dom.dataForm.value = toDatetimeLocal(venda.data);
+    dom.pagamento.value = venda.pagamento;
+    dom.desconto.value = venda.desconto;
+    dom.frete.value = venda.frete;
+    dom.observacao.value = venda.observacao;
+
+    dom.produtoList.innerHTML = "";
+    venda.produtos.forEach((produto) => adicionarProdutoRow(produto));
+
+    atualizarPreviewTotal();
+    abrirModal(dom.modal);
+  }
+
+  async function salvarVenda(event) {
+    event.preventDefault();
+
+    const payload = getFormPayload();
+    if (!payload) return;
+
+    const id = dom.vendaId.value;
+
+    try {
+      if (id) {
+        await apiUpdate(id, payload);
+      } else {
+        await apiCreate(payload);
+      }
+
+      fecharVendaModal();
+      await carregarVendas();
+    } catch (error) {
+      console.error(error);
+
+      if (USE_MOCK_FALLBACK) {
+        if (id) {
+          atualizarVendaMock(id, payload);
+        } else {
+          criarVendaMock(payload);
         }
 
-        // DESCONTO NO ESTOQUE
-        produto.estoque = (parseFloat(produto.estoque) - qtdVendida).toFixed(2);
-        
-        // REGISTRO DA VENDA COM CUSTO PARA O DASHBOARD
-        const novaVenda = {
-            produto: produto.nome,
-            qtd: qtdVendida,
-            unidade: produto.unidade,
-            valorTotal: (qtdVendida * parseFloat(produto.preco)),
-            custoTotal: (qtdVendida * parseFloat(produto.custo || 0)), // AQUI ESTÁ A CORREÇÃO
-            data: new Date().toLocaleString()
-        };
+        fecharVendaModal();
+        render();
+      }
+    }
+  }
 
-        vendas.push(novaVenda);
-        
-        localStorage.setItem("gennus_prods", JSON.stringify(produtos));
-        localStorage.setItem("gennus_vendas", JSON.stringify(vendas));
+  async function apiCreate(payload) {
+    if (state.usandoMock) throw new Error("mock mode");
 
-        alert("Venda realizada! O Dashboard foi atualizado.");
-        location.reload(); 
+    return request(API, {
+      method: "POST",
+      body: JSON.stringify(payload)
     });
+  }
 
-    function renderVendas() {
-        if (!listaVendasHtml) return;
-        listaVendasHtml.innerHTML = "";
-        vendas.slice(-5).reverse().forEach(v => {
-            listaVendasHtml.innerHTML += `
-                <tr>
-                    <td>${v.produto}</td>
-                    <td>${v.qtd} ${v.unidade}</td>
-                    <td>R$ ${v.valorTotal.toFixed(2)}</td>
-                    <td>${v.data}</td>
-                </tr>
-            `;
-        });
+  async function apiUpdate(id, payload) {
+    if (state.usandoMock) throw new Error("mock mode");
+
+    return request(`${API}/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  }
+
+  function abrirCancelarVenda(id) {
+    const venda = state.vendas.find((item) => item.id === id);
+    if (!venda || venda.status === "cancelado") return;
+
+    dom.cancelId.value = id;
+    dom.cancelMotivo.value = "";
+    abrirModal(dom.cancelModal);
+  }
+
+  async function confirmarCancelamento() {
+    const id = dom.cancelId.value;
+    const motivo = dom.cancelMotivo.value.trim();
+
+    if (!id) return;
+
+    try {
+      if (state.usandoMock) throw new Error("mock mode");
+
+      await request(`${API}/${encodeURIComponent(id)}/cancelar`, {
+        method: "PATCH",
+        body: JSON.stringify({ motivo })
+      });
+
+      fecharCancelarModal();
+      await carregarVendas();
+    } catch (error) {
+      console.error(error);
+
+      if (USE_MOCK_FALLBACK) {
+        cancelarVendaMock(id, motivo);
+        fecharCancelarModal();
+        render();
+      }
+    }
+  }
+
+  function getFormPayload() {
+    const produtos = getProdutosDoForm();
+
+    if (!produtos.length) {
+      return null;
     }
 
-    atualizarSelect();
-    renderVendas();
+    const desconto = num(dom.desconto.value);
+    const frete = num(dom.frete.value);
+    const subtotal = produtos.reduce((soma, item) => {
+      return soma + item.quantidade * item.valorUnitario;
+    }, 0);
 
-});
+    return {
+      cliente: {
+        nome: dom.cliente.value.trim(),
+        email: dom.email.value.trim()
+      },
+      canal: dom.canalForm.value,
+      status: dom.statusForm.value,
+      pagamento: dom.pagamento.value,
+      data: new Date(dom.dataForm.value).toISOString(),
+      produtos,
+      desconto,
+      frete,
+      valorTotal: Math.max(subtotal - desconto + frete, 0),
+      observacao: dom.observacao.value.trim()
+    };
+  }
+
+  function getProdutosDoForm() {
+    const rows = [...dom.produtoList.querySelectorAll("[data-produto-row]")];
+
+    return rows
+      .map((row) => {
+        const nome = row.querySelector('[name="produtoNome[]"]').value.trim();
+        const quantidade = Math.max(parseInt(row.querySelector('[name="produtoQtd[]"]').value, 10), 1);
+        const valorUnitario = num(row.querySelector('[name="produtoValor[]"]').value);
+
+        return { nome, quantidade, valorUnitario };
+      })
+      .filter((item) => item.nome && item.quantidade > 0);
+  }
+
+  function adicionarProdutoRow(produto = {}) {
+    const row = document.createElement("div");
+
+    row.className = "produto-venda-row";
+    row.dataset.produtoRow = "";
+
+    row.innerHTML = `
+      <label class="form-field produto-field-nome">
+        <span>Produto</span>
+        <input class="form-control" name="produtoNome[]" type="text"
+          placeholder="Ex: Produto Alpha" value="${escapeAttr(produto.nome ?? "")}" required>
+      </label>
+
+      <label class="form-field produto-field-qtd">
+        <span>Qtd.</span>
+        <input class="form-control" name="produtoQtd[]" type="number" min="1" step="1"
+          value="${escapeAttr(produto.quantidade ?? 1)}" required>
+      </label>
+
+      <label class="form-field produto-field-valor">
+        <span>Valor unit.</span>
+        <input class="form-control" name="produtoValor[]" type="number" min="0" step="0.01"
+          value="${escapeAttr(produto.valorUnitario ?? "")}" placeholder="0,00" required>
+      </label>
+
+      <button class="btn-remove-item" type="button" data-remove-produto aria-label="Remover produto">
+        ✕
+      </button>
+    `;
+
+    dom.produtoList.appendChild(row);
+    atualizarPreviewTotal();
+  }
+
+  function removerProdutoRow(event) {
+    const btn = event.target.closest("[data-remove-produto]");
+    if (!btn) return;
+
+    const rows = dom.produtoList.querySelectorAll("[data-produto-row]");
+
+    if (rows.length <= 1) {
+      rows[0].querySelector('[name="produtoNome[]"]').value = "";
+      rows[0].querySelector('[name="produtoQtd[]"]').value = 1;
+      rows[0].querySelector('[name="produtoValor[]"]').value = "";
+    } else {
+      btn.closest("[data-produto-row]").remove();
+    }
+
+    atualizarPreviewTotal();
+  }
+
+  function resetProdutoRows() {
+    dom.produtoList.innerHTML = "";
+    adicionarProdutoRow();
+  }
+
+  function atualizarPreviewTotal() {
+    const produtos = getProdutosDoForm();
+    const desconto = num(dom.desconto.value);
+    const frete = num(dom.frete.value);
+
+    const subtotal = produtos.reduce((soma, item) => {
+      return soma + item.quantidade * item.valorUnitario;
+    }, 0);
+
+    dom.totalPreview.textContent = money(Math.max(subtotal - desconto + frete, 0));
+  }
+
+  function criarVendaMock(payload) {
+    state.vendas.unshift(normalizarVenda({
+      ...payload,
+      id: gerarPedidoId()
+    }));
+  }
+
+  function atualizarVendaMock(id, payload) {
+    state.vendas = state.vendas.map((venda) => {
+      return venda.id === id
+        ? normalizarVenda({ ...venda, ...payload, id })
+        : venda;
+    });
+  }
+
+  function cancelarVendaMock(id, motivo) {
+    state.vendas = state.vendas.map((venda) => {
+      return venda.id === id
+        ? { ...venda, status: "cancelado", motivoCancelamento: motivo }
+        : venda;
+    });
+  }
+
+  function exportarVendas() {
+    window.location.href = `${API}/exportar?periodo=${encodeURIComponent(state.periodo)}`;
+  }
+
+  function alternarDetalhe(id) {
+    state.expandedId = state.expandedId === id ? null : id;
+    render();
+  }
+
+  function abrirModal(modal) {
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+  }
+
+  function fecharVendaModal() {
+    dom.modal.classList.remove("open");
+    dom.modal.setAttribute("aria-hidden", "true");
+  }
+
+  function fecharCancelarModal() {
+    dom.cancelModal.classList.remove("open");
+    dom.cancelModal.setAttribute("aria-hidden", "true");
+  }
+
+  function fecharAoClicarFora(event) {
+    if (event.target === dom.modal) fecharVendaModal();
+    if (event.target === dom.cancelModal) fecharCancelarModal();
+  }
+
+  function ativarPeriodo() {
+    dom.periodFilter.querySelectorAll("[data-period]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.period === state.periodo);
+    });
+  }
+
+  function setLoading() {
+    dom.kpiFaturado.textContent = "—";
+    dom.kpiPedidos.textContent = "—";
+    dom.kpiTicket.textContent = "—";
+    dom.kpiConcluidos.textContent = "—";
+    dom.kpiCancelados.textContent = "—";
+    dom.count.textContent = "— pedidos";
+  }
+
+  function vendaMock(id, nome, email, canal, status, pagamento, data, produtos, motivoCancelamento = "") {
+    return {
+      id,
+      cliente: { nome, email },
+      canal,
+      status,
+      pagamento,
+      data,
+      produtos: produtos.map(([nomeProduto, quantidade, valorUnitario]) => ({
+        nome: nomeProduto,
+        quantidade,
+        valorUnitario
+      })),
+      desconto: 0,
+      frete: 0,
+      observacao: "Venda de demonstração.",
+      motivoCancelamento
+    };
+  }
+
+  function gerarPedidoId() {
+    return `PED-${String(Date.now()).slice(-5)}`;
+  }
+
+  function num(value) {
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  }
+
+  function money(value) {
+    return num(value).toLocaleString("pt-BR", {
+      style: "currency",
+      currency: "BRL"
+    });
+  }
+
+  function formatDate(value) {
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return "—";
+    }
+
+    return date.toLocaleDateString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
+  function toDatetimeLocal(value) {
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+
+    const offset = date.getTimezoneOffset();
+    const local = new Date(date.getTime() - offset * 60 * 1000);
+
+    return local.toISOString().slice(0, 16);
+  }
+
+  function normalize(value) {
+    return String(value ?? "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+  }
+
+  function debounce(fn, delay = 300) {
+    let timer;
+
+    return (...args) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), delay);
+    };
+  }
+
+  function escapeHTML(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    }[char]));
+  }
+
+  function escapeAttr(value) {
+    return escapeHTML(value).replace(/`/g, "&#096;");
+  }
+})();

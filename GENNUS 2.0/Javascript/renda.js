@@ -1,468 +1,370 @@
-/**
- * renda.js — Renda Bruta / Líquida — Gennus
- * JS interativo com dados simulados.
- * Sem localStorage / backend — só UI e lógica de apresentação.
- */
+/* =========================================================
+   Gennus ERP — Renda Bruta / Líquida
 
-'use strict';
+   Sem localStorage.
+   Sem alert de erro de backend.
+   Pronto para API real.
 
-/* ================================================
-   1. DADOS SIMULADOS POR PERÍODO
-================================================ */
-const DATA = {
-  '7d': {
-    label: '7 dias',
-    bruta:    41800,
-    impostos: 6270,   // ~15%
-    custos:   12540,  // ~30%
-    outras:   2090,   // ~5%
-    anterior: { liquida: 18200 }, // período anterior (para delta)
-    historico: [
-      { periodo: 'Seg', bruto: 5800, deducoes: 2900, liquido: 2900 },
-      { periodo: 'Ter', bruto: 5200, deducoes: 2600, liquido: 2600 },
-      { periodo: 'Qua', bruto: 6400, deducoes: 3200, liquido: 3200 },
-      { periodo: 'Qui', bruto: 5900, deducoes: 2950, liquido: 2950 },
-      { periodo: 'Sex', bruto: 7100, deducoes: 3550, liquido: 3550 },
-      { periodo: 'Sáb', bruto: 7800, deducoes: 3900, liquido: 3900 },
-      { periodo: 'Dom', bruto: 3600, deducoes: 1800, liquido: 1800 },
-    ],
-  },
-  '30d': {
-    label: '30 dias',
-    bruta:    109300,
-    impostos: 16395,
-    custos:   32790,
-    outras:   5465,
-    anterior: { liquida: 48200 },
-    historico: [
-      { periodo: 'Semana 1', bruto: 22000, deducoes: 11000, liquido: 11000 },
-      { periodo: 'Semana 2', bruto: 27500, deducoes: 13750, liquido: 13750 },
-      { periodo: 'Semana 3', bruto: 31000, deducoes: 15500, liquido: 15500 },
-      { periodo: 'Semana 4', bruto: 28800, deducoes: 14400, liquido: 14400 },
-    ],
-  },
-  '90d': {
-    label: '3 meses',
-    bruta:    287500,
-    impostos: 43125,
-    custos:   86250,
-    outras:   14375,
-    anterior: { liquida: 128000 },
-    historico: [
-      { periodo: 'Janeiro',   bruto: 88000,  deducoes: 44000, liquido: 44000 },
-      { periodo: 'Fevereiro', bruto: 102000, deducoes: 51000, liquido: 51000 },
-      { periodo: 'Março',     bruto: 97500,  deducoes: 48750, liquido: 48750 },
-    ],
-  },
-  '1y': {
-    label: '1 ano',
-    bruta:    1351000,
-    impostos: 202650,
-    custos:   405300,
-    outras:   67550,
-    anterior: { liquida: 580000 },
-    historico: [
-      { periodo: 'Jan', bruto: 71000,  deducoes: 35500, liquido: 35500 },
-      { periodo: 'Fev', bruto: 88000,  deducoes: 44000, liquido: 44000 },
-      { periodo: 'Mar', bruto: 102000, deducoes: 51000, liquido: 51000 },
-      { periodo: 'Abr', bruto: 97500,  deducoes: 48750, liquido: 48750 },
-      { periodo: 'Mai', bruto: 115000, deducoes: 57500, liquido: 57500 },
-      { periodo: 'Jun', bruto: 128000, deducoes: 64000, liquido: 64000 },
-      { periodo: 'Jul', bruto: 119000, deducoes: 59500, liquido: 59500 },
-      { periodo: 'Ago', bruto: 132000, deducoes: 66000, liquido: 66000 },
-      { periodo: 'Set', bruto: 141000, deducoes: 70500, liquido: 70500 },
-      { periodo: 'Out', bruto: 138000, deducoes: 69000, liquido: 69000 },
-      { periodo: 'Nov', bruto: 152000, deducoes: 76000, liquido: 76000 },
-      { periodo: 'Dez', bruto: 168000, deducoes: 84000, liquido: 84000 },
-    ],
-  },
-};
+   Rota esperada:
+   GET /api/renda?periodo=7d
+========================================================= */
 
-/* Categorias de dedução com cores fixas */
-const CATEGORIAS = [
-  { key: 'impostos', nome: 'Impostos',            cor: '#f87171' },
-  { key: 'custos',   nome: 'Custos Operacionais', cor: '#fb923c' },
-  { key: 'outras',   nome: 'Outras Deduções',     cor: '#fbbf24' },
-];
+(() => {
+  "use strict";
 
-/* ================================================
-   2. HELPERS
-================================================ */
+  const API = "/api/renda";
 
-/** Formata número em BRL: 120000 → "R$ 120.000" */
-function fmtBRL(n) {
-  return 'R$ ' + Math.round(n).toLocaleString('pt-BR');
-}
+  const $ = (id) => document.getElementById(id);
 
-/** Formata percentual: 0.427 → "42,7%" */
-function fmtPct(n) {
-  return (n * 100).toFixed(1).replace('.', ',') + '%';
-}
+  const dom = {
+    periodFilter: $("period-filter"),
+    badgePeriodo: $("badge-periodo"),
 
-/** Calcula derivados a partir dos dados brutos */
-function calcular(d) {
-  const deducoes = d.impostos + d.custos + d.outras;
-  const liquida  = d.bruta - deducoes;
-  const margem   = liquida / d.bruta;
-  const crescimento = (liquida - d.anterior.liquida) / d.anterior.liquida;
-  return { deducoes, liquida, margem, crescimento };
-}
+    bruta: $("kpi-bruta"),
+    brutaDelta: $("kpi-bruta-delta"),
+    liquida: $("kpi-liquida"),
+    liquidaDelta: $("kpi-liquida-delta"),
+    deducoes: $("kpi-deducoes"),
+    margem: $("kpi-margem"),
 
-/** Classifica margem para colorir a tag da tabela */
-function classMargem(pct) {
-  if (pct >= 0.40) return 'alta';
-  if (pct >= 0.25) return 'media';
-  return 'baixa';
-}
+    wfBrutaVal: $("wf-bruta-val"),
+    wfImpostosVal: $("wf-impostos-val"),
+    wfCustosVal: $("wf-custos-val"),
+    wfOutrasVal: $("wf-outras-val"),
+    wfLiquidaVal: $("wf-liquida-val"),
 
-/* ================================================
-   3. ANIMAÇÃO DE CONTAGEM (count-up)
-   Anima um elemento de 0 até o valor alvo.
-================================================ */
-function countUp(el, target, formatter, duration = 700) {
-  if (!el) return;
-  const start     = performance.now();
-  const startVal  = 0;
+    wfBarBruta: $("wf-bar-bruta"),
+    wfBarImpostos: $("wf-bar-impostos"),
+    wfBarCustos: $("wf-bar-custos"),
+    wfBarOutras: $("wf-bar-outras"),
+    wfBarLiquida: $("wf-bar-liquida"),
 
-  function step(now) {
-    const elapsed  = now - start;
-    const progress = Math.min(elapsed / duration, 1);
-    // easing: ease-out cúbico
-    const eased    = 1 - Math.pow(1 - progress, 3);
-    const current  = startVal + (target - startVal) * eased;
-    el.textContent = formatter(current);
-    if (progress < 1) requestAnimationFrame(step);
+    wfImpostosPct: $("wf-impostos-pct"),
+    wfCustosPct: $("wf-custos-pct"),
+    wfOutrasPct: $("wf-outras-pct"),
+    wfLiquidaPct: $("wf-liquida-pct"),
+
+    detalheList: $("detalhe-list"),
+    dfDeducoes: $("df-deducoes"),
+    dfLiquida: $("df-liquida"),
+
+    historico: $("historico-tbody"),
+
+    saudeMargemVal: $("saude-margem-val"),
+    saudeBarMargem: $("saude-bar-margem"),
+    saudeEficienciaVal: $("saude-eficiencia-val"),
+    saudeBarEficiencia: $("saude-bar-eficiencia"),
+    saudeTributosVal: $("saude-tributos-val"),
+    saudeBarTributos: $("saude-bar-tributos"),
+    saudeCrescimentoVal: $("saude-crescimento-val"),
+    saudeCrescimentoDesc: $("saude-crescimento-desc")
+  };
+
+  const state = {
+    periodo: "7d",
+    dados: null
+  };
+
+  const periodoTexto = {
+    "7d": "7 dias",
+    "30d": "30 dias",
+    "90d": "3 meses",
+    "1y": "1 ano"
+  };
+
+  const deducaoConfig = [
+    { key: "impostos", nome: "Impostos", cor: "#f87171" },
+    { key: "custos", nome: "Custos Operacionais", cor: "#fb923c" },
+    { key: "outras", nome: "Outras Deduções", cor: "#fbbf24" }
+  ];
+
+  init();
+
+  function init() {
+    registrarEventos();
+    carregarRenda();
   }
 
-  requestAnimationFrame(step);
-}
+  function registrarEventos() {
+    dom.periodFilter.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-period]");
+      if (!btn) return;
 
-/* ================================================
-   4. RENDERIZAÇÃO: KPIs
-================================================ */
-function renderKPIs(d, calc) {
-  /* Valores principais */
-  countUp(document.getElementById('kpi-bruta'),    d.bruta,       fmtBRL);
-  countUp(document.getElementById('kpi-liquida'),  calc.liquida,  fmtBRL);
-  countUp(document.getElementById('kpi-deducoes'), calc.deducoes, fmtBRL);
-
-  /* Margem — anima de 0% a valor real */
-  const elMargem = document.getElementById('kpi-margem');
-  countUp(elMargem, calc.margem * 100, v => v.toFixed(1).replace('.', ',') + '%');
-
-  /* Deltas */
-  renderDelta('kpi-bruta-delta',   null);  // bruta não tem delta simples
-  renderDelta('kpi-liquida-delta', calc.crescimento);
-}
-
-function renderDelta(id, valor) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  if (valor === null) { el.textContent = ''; return; }
-
-  const pos   = valor >= 0;
-  const sinal = pos ? '+' : '';
-  el.textContent = `${sinal}${fmtPct(Math.abs(valor))} vs. anterior`;
-  el.className   = 'kpi-delta ' + (pos ? 'pos' : 'neg');
-}
-
-/* ================================================
-   5. RENDERIZAÇÃO: WATERFALL
-================================================ */
-function renderWaterfall(d, calc) {
-  /* Badge do período */
-  const badge = document.getElementById('badge-periodo');
-  if (badge) badge.textContent = d.label;
-
-  /* Helper: anima a largura de uma barra */
-  function animBar(id, pct) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    // reset pra 0 antes de animar (garante que a animação sempre roda)
-    el.style.width = '0%';
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        el.style.width = (pct * 100).toFixed(1) + '%';
-      });
+      state.periodo = btn.dataset.period;
+      ativarPeriodo();
+      carregarRenda();
     });
   }
 
-  /* Linha: Receita Bruta (sempre 100%) */
-  document.getElementById('wf-bruta-val').textContent = fmtBRL(d.bruta);
-  animBar('wf-bar-bruta', 1);
+  async function carregarRenda() {
+    setLoading();
 
-  /* Linha: Impostos */
-  const pctImpostos = d.impostos / d.bruta;
-  document.getElementById('wf-impostos-val').textContent = '− ' + fmtBRL(d.impostos);
-  document.getElementById('wf-impostos-pct').textContent = fmtPct(pctImpostos);
-  animBar('wf-bar-impostos', pctImpostos);
+    try {
+      const dados = await request(`${API}?periodo=${encodeURIComponent(state.periodo)}`);
+      state.dados = normalizarDados(dados);
+      render();
+    } catch (error) {
+      console.error(error);
+      limparTela();
+    }
+  }
 
-  /* Linha: Custos Operacionais */
-  const pctCustos = d.custos / d.bruta;
-  document.getElementById('wf-custos-val').textContent = '− ' + fmtBRL(d.custos);
-  document.getElementById('wf-custos-pct').textContent = fmtPct(pctCustos);
-  animBar('wf-bar-custos', pctCustos);
+  async function request(url) {
+    const response = await fetch(url, {
+      method: "GET",
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json"
+      }
+    });
 
-  /* Linha: Outras Deduções */
-  const pctOutras = d.outras / d.bruta;
-  document.getElementById('wf-outras-val').textContent = '− ' + fmtBRL(d.outras);
-  document.getElementById('wf-outras-pct').textContent = fmtPct(pctOutras);
-  animBar('wf-bar-outras', pctOutras);
-
-  /* Linha: Renda Líquida */
-  const pctLiquida = calc.liquida / d.bruta;
-  document.getElementById('wf-liquida-val').textContent = fmtBRL(calc.liquida);
-  document.getElementById('wf-liquida-pct').textContent = fmtPct(pctLiquida);
-  animBar('wf-bar-liquida', pctLiquida);
-}
-
-/* ================================================
-   6. RENDERIZAÇÃO: DETALHAMENTO
-================================================ */
-function renderDetalhamento(d, calc) {
-  const ul = document.getElementById('detalhe-list');
-  if (!ul) return;
-  ul.innerHTML = '';
-
-  CATEGORIAS.forEach(cat => {
-    const valor = d[cat.key];
-    const pct   = valor / d.bruta;
-
-    const li = document.createElement('li');
-    li.className = 'detalhe-item';
-    li.innerHTML = `
-      <span class="detalhe-dot" style="background:${cat.cor};box-shadow:0 0 7px ${cat.cor}66;"></span>
-      <span class="detalhe-nome">${cat.nome}</span>
-      <span class="detalhe-valor">− ${fmtBRL(valor)}</span>
-      <span class="detalhe-pct-tag">${fmtPct(pct)}</span>
-    `;
-    ul.appendChild(li);
-  });
-
-  /* Rodapé */
-  document.getElementById('df-deducoes').textContent = '− ' + fmtBRL(calc.deducoes);
-  document.getElementById('df-liquida').textContent  = fmtBRL(calc.liquida);
-}
-
-/* ================================================
-   7. RENDERIZAÇÃO: TABELA HISTÓRICO
-================================================ */
-function renderHistorico(d) {
-  const tbody = document.getElementById('historico-tbody');
-  if (!tbody) return;
-  tbody.innerHTML = '';
-
-  const rows = d.historico;
-
-  rows.forEach((row, i) => {
-    const margem = row.liquido / row.bruto;
-    const classMg = classMargem(margem);
-
-    /* Variação: compara com linha anterior */
-    let varHTML = '<span style="color:#333">—</span>';
-    if (i > 0) {
-      const prev = rows[i - 1].liquido;
-      const var_ = (row.liquido - prev) / prev;
-      const pos  = var_ >= 0;
-      const sinal = pos ? '+' : '';
-      varHTML = `<span class="${pos ? 'td-var-pos' : 'td-var-neg'}">${sinal}${fmtPct(Math.abs(var_))}</span>`;
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
     }
 
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${row.periodo}</td>
-      <td class="td-bruto">${fmtBRL(row.bruto)}</td>
-      <td style="color:var(--vermelho)">${fmtBRL(row.deducoes)}</td>
-      <td class="td-liquido">${fmtBRL(row.liquido)}</td>
-      <td><span class="margem-tag ${classMg}">${fmtPct(margem)}</span></td>
-      <td>${varHTML}</td>
-    `;
+    return response.json();
+  }
 
-    /* Entrada staggerada por linha */
-    tr.style.opacity = '0';
-    tr.style.transform = 'translateY(6px)';
-    tr.style.transition = `opacity 0.3s ease ${i * 40}ms, transform 0.3s ease ${i * 40}ms`;
-    tbody.appendChild(tr);
+  function normalizarDados(dados) {
+    const deducoes = {
+      impostos: num(dados.deducoes?.impostos),
+      custos: num(dados.deducoes?.custos),
+      outras: num(dados.deducoes?.outras)
+    };
 
-    /* Força reflow antes de aplicar o estado final */
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        tr.style.opacity = '1';
-        tr.style.transform = 'translateY(0)';
-      });
+    const bruta = num(dados.bruta);
+    const totalDeducoes = deducoes.impostos + deducoes.custos + deducoes.outras;
+    const liquida = dados.liquida === undefined ? bruta - totalDeducoes : num(dados.liquida);
+
+    return {
+      bruta,
+      liquida,
+      brutaDelta: num(dados.brutaDelta),
+      liquidaDelta: num(dados.liquidaDelta),
+      deducoes,
+      totalDeducoes,
+      historico: Array.isArray(dados.historico) ? dados.historico : []
+    };
+  }
+
+  function render() {
+    const d = state.dados;
+
+    renderKPIs(d);
+    renderWaterfall(d);
+    renderDetalhamento(d);
+    renderHistorico(d.historico);
+    renderSaude(d);
+  }
+
+  function renderKPIs(d) {
+    const margem = pct(d.liquida, d.bruta);
+
+    dom.bruta.textContent = money(d.bruta);
+    dom.brutaDelta.textContent = delta(d.brutaDelta);
+    dom.brutaDelta.className = `kpi-delta ${classeDelta(d.brutaDelta)}`;
+
+    dom.liquida.textContent = money(d.liquida);
+    dom.liquidaDelta.textContent = delta(d.liquidaDelta);
+    dom.liquidaDelta.className = `kpi-delta ${classeDelta(d.liquidaDelta)}`;
+
+    dom.deducoes.textContent = money(d.totalDeducoes);
+    dom.margem.textContent = `${margem.toFixed(1)}%`;
+    dom.badgePeriodo.textContent = periodoTexto[state.periodo];
+  }
+
+  function renderWaterfall(d) {
+    const impostosPct = pct(d.deducoes.impostos, d.bruta);
+    const custosPct = pct(d.deducoes.custos, d.bruta);
+    const outrasPct = pct(d.deducoes.outras, d.bruta);
+    const liquidaPct = pct(d.liquida, d.bruta);
+
+    dom.wfBrutaVal.textContent = money(d.bruta);
+    dom.wfImpostosVal.textContent = `− ${money(d.deducoes.impostos)}`;
+    dom.wfCustosVal.textContent = `− ${money(d.deducoes.custos)}`;
+    dom.wfOutrasVal.textContent = `− ${money(d.deducoes.outras)}`;
+    dom.wfLiquidaVal.textContent = money(d.liquida);
+
+    dom.wfBarBruta.style.width = "100%";
+    dom.wfBarImpostos.style.width = `${clamp(impostosPct, 0, 100)}%`;
+    dom.wfBarCustos.style.width = `${clamp(custosPct, 0, 100)}%`;
+    dom.wfBarOutras.style.width = `${clamp(outrasPct, 0, 100)}%`;
+    dom.wfBarLiquida.style.width = `${clamp(liquidaPct, 0, 100)}%`;
+
+    dom.wfImpostosPct.textContent = `${impostosPct.toFixed(1)}%`;
+    dom.wfCustosPct.textContent = `${custosPct.toFixed(1)}%`;
+    dom.wfOutrasPct.textContent = `${outrasPct.toFixed(1)}%`;
+    dom.wfLiquidaPct.textContent = `${liquidaPct.toFixed(1)}%`;
+  }
+
+  function renderDetalhamento(d) {
+    dom.detalheList.innerHTML = deducaoConfig.map((item) => {
+      const valor = d.deducoes[item.key];
+      const percentual = pct(valor, d.bruta);
+
+      return `
+        <li class="detalhe-item">
+          <span class="detalhe-dot" style="background:${item.cor}"></span>
+          <span class="detalhe-nome">${escapeHTML(item.nome)}</span>
+          <strong class="detalhe-valor">− ${money(valor)}</strong>
+          <span class="detalhe-pct-tag">${percentual.toFixed(1)}%</span>
+        </li>
+      `;
+    }).join("");
+
+    dom.dfDeducoes.textContent = `− ${money(d.totalDeducoes)}`;
+    dom.dfLiquida.textContent = money(d.liquida);
+  }
+
+  function renderHistorico(lista) {
+    dom.historico.innerHTML = lista.map((item) => {
+      const bruto = num(item.bruto);
+      const deducoes = num(item.deducoes);
+      const liquido = item.liquido === undefined ? bruto - deducoes : num(item.liquido);
+      const margem = pct(liquido, bruto);
+      const variacao = item.variacao;
+
+      return `
+        <tr>
+          <td>${escapeHTML(item.periodo)}</td>
+          <td class="td-bruto">${money(bruto)}</td>
+          <td class="wf-neg">${money(deducoes)}</td>
+          <td class="td-liquido">${money(liquido)}</td>
+          <td>
+            <span class="margem-tag ${classeMargem(margem)}">${margem.toFixed(1)}%</span>
+          </td>
+          <td class="${classeVariacao(variacao)}">${textoVariacao(variacao)}</td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  function renderSaude(d) {
+    const margem = pct(d.liquida, d.bruta);
+    const eficiencia = 100 - pct(d.deducoes.custos, d.bruta);
+    const cargaTributaria = pct(d.deducoes.impostos, d.bruta);
+
+    dom.saudeMargemVal.textContent = `${margem.toFixed(1)}%`;
+    dom.saudeBarMargem.style.width = `${clamp(margem, 0, 100)}%`;
+
+    dom.saudeEficienciaVal.textContent = `${eficiencia.toFixed(1)}%`;
+    dom.saudeBarEficiencia.style.width = `${clamp(eficiencia, 0, 100)}%`;
+
+    dom.saudeTributosVal.textContent = `${cargaTributaria.toFixed(1)}%`;
+    dom.saudeBarTributos.style.width = `${clamp(cargaTributaria, 0, 100)}%`;
+
+    dom.saudeCrescimentoVal.textContent = deltaCurto(d.liquidaDelta);
+    dom.saudeCrescimentoVal.className = `saude-valor saude-valor-crescimento ${classeDelta(d.liquidaDelta)}`;
+    dom.saudeCrescimentoDesc.textContent =
+      d.liquidaDelta >= 0
+        ? "↑ Crescimento vs. período anterior"
+        : "↓ Queda vs. período anterior";
+  }
+
+  function ativarPeriodo() {
+    dom.periodFilter.querySelectorAll("[data-period]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.period === state.periodo);
     });
-  });
-}
+  }
 
-/* ================================================
-   8. RENDERIZAÇÃO: SAÚDE FINANCEIRA
-================================================ */
-function renderSaude(d, calc) {
-  /* Helper: anima barra de saúde */
-  function animSaudeBar(id, pct) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.style.width = '0%';
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        el.style.width = Math.min(pct * 100, 100).toFixed(1) + '%';
-      });
+  function setLoading() {
+    [
+      dom.bruta,
+      dom.liquida,
+      dom.deducoes,
+      dom.margem,
+      dom.wfBrutaVal,
+      dom.wfImpostosVal,
+      dom.wfCustosVal,
+      dom.wfOutrasVal,
+      dom.wfLiquidaVal,
+      dom.dfDeducoes,
+      dom.dfLiquida,
+      dom.saudeMargemVal,
+      dom.saudeEficienciaVal,
+      dom.saudeTributosVal,
+      dom.saudeCrescimentoVal
+    ].forEach((el) => {
+      if (el) el.textContent = "—";
     });
   }
 
-  /* Margem líquida */
-  document.getElementById('saude-margem-val').textContent = fmtPct(calc.margem);
-  animSaudeBar('saude-bar-margem', calc.margem);
-  /* Cor condicional do valor de margem */
-  const elMargVal = document.getElementById('saude-margem-val');
-  if (elMargVal) {
-    elMargVal.style.color = calc.margem >= 0.4
-      ? 'var(--verde)'
-      : calc.margem >= 0.25
-        ? 'var(--amarelo)'
-        : 'var(--vermelho)';
-  }
+  function limparTela() {
+    dom.detalheList.innerHTML = "";
+    dom.historico.innerHTML = "";
 
-  /* Eficiência operacional = 1 - (custos / bruta) */
-  const eficiencia = 1 - (d.custos / d.bruta);
-  document.getElementById('saude-eficiencia-val').textContent = fmtPct(eficiencia);
-  animSaudeBar('saude-bar-eficiencia', eficiencia);
-
-  /* Carga tributária = impostos / bruta */
-  const tributos = d.impostos / d.bruta;
-  document.getElementById('saude-tributos-val').textContent = fmtPct(tributos);
-  animSaudeBar('saude-bar-tributos', tributos);
-
-  /* Crescimento líquido */
-  const pos = calc.crescimento >= 0;
-  const elCrescVal  = document.getElementById('saude-crescimento-val');
-  const elCrescDesc = document.getElementById('saude-crescimento-desc');
-
-  if (elCrescVal) {
-    const sinal = pos ? '+' : '';
-    elCrescVal.textContent = `${sinal}${fmtPct(Math.abs(calc.crescimento))}`;
-    elCrescVal.className   = 'saude-valor saude-valor-crescimento ' + (pos ? 'pos' : 'neg');
-  }
-
-  if (elCrescDesc) {
-    elCrescDesc.textContent = pos
-      ? `↑ Crescimento vs. período anterior`
-      : `↓ Queda vs. período anterior`;
-    elCrescDesc.style.color = pos ? 'var(--verde)' : 'var(--vermelho)';
-    elCrescDesc.style.opacity = '0.8';
-  }
-}
-
-/* ================================================
-   9. RENDER PRINCIPAL
-   Orquestra todos os sub-renders para um período.
-================================================ */
-function render(period) {
-  const d    = DATA[period];
-  const calc = calcular(d);
-
-  renderKPIs(d, calc);
-  renderWaterfall(d, calc);
-  renderDetalhamento(d, calc);
-  renderHistorico(d);
-  renderSaude(d, calc);
-}
-
-/* ================================================
-   10. FILTRO DE PERÍODO
-================================================ */
-function initPeriodFilter() {
-  const container = document.getElementById('period-filter');
-  if (!container) return;
-
-  container.addEventListener('click', e => {
-    const btn = e.target.closest('.period-btn');
-    if (!btn) return;
-
-    /* Atualiza estado visual dos botões */
-    container.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-
-    /* Fade-out rápido dos cards de conteúdo */
-    const cards = document.querySelectorAll('.renda-card, .renda-kpis');
-    cards.forEach(c => {
-      c.style.transition = 'opacity 0.18s ease';
-      c.style.opacity    = '0.4';
+    [
+      dom.wfBarImpostos,
+      dom.wfBarCustos,
+      dom.wfBarOutras,
+      dom.wfBarLiquida,
+      dom.saudeBarMargem,
+      dom.saudeBarEficiencia,
+      dom.saudeBarTributos
+    ].forEach((bar) => {
+      if (bar) bar.style.width = "0%";
     });
+  }
 
-    /* Aguarda o fade e re-renderiza */
-    setTimeout(() => {
-      render(btn.dataset.period);
-      cards.forEach(c => {
-        c.style.opacity = '1';
-      });
-    }, 180);
-  });
-}
+  function pct(valor, total) {
+    return total > 0 ? (valor / total) * 100 : 0;
+  }
 
-/* ================================================
-   11. HOVER INTERATIVO NA TABELA
-   Destaca a linha inteira ao passar o mouse.
-================================================ */
-function initTableHover() {
-  const tbody = document.getElementById('historico-tbody');
-  if (!tbody) return;
+  function clamp(valor, min, max) {
+    return Math.min(Math.max(valor, min), max);
+  }
 
-  /* Delegação de evento — funciona mesmo após re-render */
-  tbody.addEventListener('mouseover', e => {
-    const tr = e.target.closest('tr');
-    if (tr) tr.style.background = 'rgba(168,85,247,0.04)';
-  });
+  function num(valor) {
+    const n = Number(valor);
+    return Number.isFinite(n) ? n : 0;
+  }
 
-  tbody.addEventListener('mouseout', e => {
-    const tr = e.target.closest('tr');
-    if (tr) tr.style.background = '';
-  });
-}
+  function money(valor) {
+    return num(valor).toLocaleString("pt-BR", {
+      style: "currency",
+      currency: "BRL"
+    });
+  }
 
-/* ================================================
-   12. TOOLTIP NOS ITENS DO DETALHAMENTO
-   Mostra valor exato ao hover nas linhas da lista.
-================================================ */
-function initDetalheTooltip() {
-  const ul = document.getElementById('detalhe-list');
-  if (!ul) return;
+  function delta(valor) {
+    const sinal = valor >= 0 ? "+" : "−";
+    return `${sinal}${Math.abs(valor).toFixed(1)}% vs. anterior`;
+  }
 
-  ul.addEventListener('mouseover', e => {
-    const item = e.target.closest('.detalhe-item');
-    if (!item || item.querySelector('.detalhe-tooltip')) return;
+  function deltaCurto(valor) {
+    const sinal = valor >= 0 ? "+" : "−";
+    return `${sinal}${Math.abs(valor).toFixed(1)}%`;
+  }
 
-    const valEl = item.querySelector('.detalhe-valor');
-    if (!valEl) return;
+  function classeDelta(valor) {
+    return valor >= 0 ? "pos" : "neg";
+  }
 
-    const tip = document.createElement('span');
-    tip.className   = 'detalhe-tooltip';
-    tip.textContent = 'dedução do bruto';
-    tip.style.cssText = `
-      position:absolute; right:10px; top:-22px;
-      background:#111; border:1px solid rgba(255,255,255,0.08);
-      color:#777; font-size:0.62rem; padding:2px 7px;
-      border-radius:4px; pointer-events:none; white-space:nowrap;
-      font-family:'Space Grotesk',sans-serif;
-    `;
-    item.style.position = 'relative';
-    item.appendChild(tip);
-  });
+  function classeMargem(margem) {
+    if (margem >= 40) return "alta";
+    if (margem >= 20) return "media";
+    return "baixa";
+  }
 
-  ul.addEventListener('mouseout', e => {
-    const item = e.target.closest('.detalhe-item');
-    if (!item) return;
-    const tip = item.querySelector('.detalhe-tooltip');
-    if (tip) tip.remove();
-  });
-}
+  function classeVariacao(valor) {
+    if (valor === null || valor === undefined) return "";
+    return num(valor) >= 0 ? "td-var-pos" : "td-var-neg";
+  }
 
-/* ================================================
-   13. INIT
-================================================ */
-document.addEventListener('DOMContentLoaded', () => {
-  render('7d');
-  initPeriodFilter();
-  initTableHover();
-  initDetalheTooltip();
-});
+  function textoVariacao(valor) {
+    if (valor === null || valor === undefined) return "—";
+
+    const sinal = num(valor) >= 0 ? "+" : "";
+    return `${sinal}${num(valor).toFixed(1)}%`;
+  }
+
+  function escapeHTML(valor) {
+    return String(valor ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    }[char]));
+  }
+})();

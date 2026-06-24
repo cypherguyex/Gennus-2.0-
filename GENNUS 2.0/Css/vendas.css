@@ -689,3 +689,487 @@ tr.expand-row td {
   .status-pills { gap: 4px; }
   .pill { padding: 6px 10px; }
 }
+
+/*CRUD*/
+
+/* ================================================
+   CRUD DE VENDAS — Modal + ações
+   Mantém o mesmo visual dark tech da página.
+================================================ */
+
+/* Botão principal: ação de criar venda */
+.btn-primary,
+.btn-secondary,
+.btn-danger,
+.btn-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  padding: 9px 16px;
+  border: 1px solid rgba(168,85,247,0.45);
+  background: var(--roxo);
+  color: #fff;
+  box-shadow: 0 0 14px rgba(168,85,247,0.28);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 20px rgba(168,85,247,0.42);
+}
+
+.btn-primary:active,
+.btn-secondary:active,
+.btn-danger:active,
+.btn-mini:active {
+  transform: scale(0.97);
+}
+
+.btn-plus {
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.btn-secondary {
+  padding: 9px 16px;
+  border: 1px solid var(--borda);
+  background: var(--bg-surface-2);
+  color: var(--texto-muted);
+}
+
+.btn-secondary:hover {
+  border-color: var(--roxo-borda);
+  color: var(--texto);
+}
+
+.btn-danger {
+  padding: 9px 16px;
+  border: 1px solid rgba(248,113,113,0.35);
+  background: rgba(248,113,113,0.12);
+  color: #fca5a5;
+}
+
+.btn-danger:hover {
+  background: rgba(248,113,113,0.18);
+  border-color: rgba(248,113,113,0.55);
+}
+
+.btn-mini {
+  padding: 6px 11px;
+  border: 1px solid rgba(168,85,247,0.3);
+  background: rgba(168,85,247,0.08);
+  color: var(--roxo);
+  font-size: 0.65rem;
+}
+
+.btn-mini:hover {
+  background: rgba(168,85,247,0.14);
+  border-color: var(--roxo-borda);
+}
+
+/* Coluna de ações */
+.col-actions {
+  text-align: right;
+}
+
+.venda-actions {
+  display: inline-flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 6px;
+  border: 1px solid var(--borda);
+  background: var(--bg-surface-2);
+  color: var(--texto-muted);
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.action-btn:hover {
+  border-color: var(--roxo-borda);
+  color: var(--roxo);
+  background: rgba(168,85,247,0.08);
+}
+
+.action-btn.edit {
+  color: #93c5fd;
+  border-color: rgba(96,165,250,0.18);
+}
+
+.action-btn.edit:hover {
+  background: rgba(96,165,250,0.08);
+  border-color: rgba(96,165,250,0.4);
+}
+
+.action-btn.cancel {
+  color: #fca5a5;
+  border-color: rgba(248,113,113,0.18);
+}
+
+.action-btn.cancel:hover {
+  background: rgba(248,113,113,0.08);
+  border-color: rgba(248,113,113,0.4);
+}
+
+.action-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(10px);
+}
+
+.modal-backdrop.open {
+  display: flex;
+  animation: modalFade 0.2s ease both;
+}
+
+@keyframes modalFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.modal-card {
+  width: min(920px, 100%);
+  max-height: calc(100vh - 56px);
+  overflow-y: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--borda);
+  border-radius: 18px;
+  box-shadow: 0 28px 80px rgba(0,0,0,0.55);
+  animation: modalSlide 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.modal-card-sm {
+  width: min(520px, 100%);
+}
+
+@keyframes modalSlide {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.modal-card::-webkit-scrollbar {
+  width: 5px;
+}
+
+.modal-card::-webkit-scrollbar-thumb {
+  background: #222;
+  border-radius: 99px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.modal-eyebrow {
+  display: block;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12rem;
+  color: var(--roxo);
+  margin-bottom: 4px;
+}
+
+.modal-eyebrow.danger {
+  color: var(--vermelho);
+}
+
+.modal-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--texto);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.modal-subtitle {
+  font-size: 0.78rem;
+  color: #555;
+  margin-top: 4px;
+}
+
+.modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--borda);
+  background: var(--bg-surface-2);
+  color: var(--texto-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.modal-close:hover {
+  border-color: var(--roxo-borda);
+  color: var(--texto);
+}
+
+/* Formulário */
+.venda-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 24px 24px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+
+.form-grid-small {
+  grid-template-columns: 1fr 1fr 1.2fr;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.form-field span {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.67rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07rem;
+  color: #555;
+}
+
+.form-control {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 9px;
+  border: 1px solid var(--borda);
+  background: var(--bg-surface-2);
+  color: var(--texto);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.82rem;
+  padding: 10px 12px;
+  outline: none;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.form-control::placeholder {
+  color: #444;
+}
+
+.form-control:focus {
+  border-color: var(--roxo-borda-foco);
+  background: var(--bg-input-focus);
+}
+
+select.form-control {
+  cursor: pointer;
+}
+
+.textarea-control {
+  resize: vertical;
+  min-height: 86px;
+}
+
+/* Seção de produtos dentro do modal */
+.form-section {
+  border: 1px solid var(--borda);
+  background: rgba(255,255,255,0.015);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.form-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--borda);
+  margin-bottom: 14px;
+}
+
+.form-section-header h3 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08rem;
+  color: var(--texto-muted);
+}
+
+.form-section-header p {
+  font-size: 0.72rem;
+  color: #444;
+  margin-top: 3px;
+}
+
+.produto-venda-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.produto-venda-row {
+  display: grid;
+  grid-template-columns: 1fr 90px 140px 34px;
+  gap: 10px;
+  align-items: end;
+}
+
+.btn-remove-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  width: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(248,113,113,0.18);
+  background: rgba(248,113,113,0.06);
+  color: #fca5a5;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-remove-item:hover {
+  border-color: rgba(248,113,113,0.4);
+  background: rgba(248,113,113,0.12);
+}
+
+/* Preview de total */
+.venda-total-preview {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-height: 64px;
+  border-radius: 12px;
+  border: 1px solid rgba(168,85,247,0.2);
+  background: rgba(168,85,247,0.06);
+  padding: 12px 14px;
+}
+
+.venda-total-preview span {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08rem;
+  color: #555;
+}
+
+.venda-total-preview strong {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--verde);
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--borda);
+}
+
+/* Responsivo do CRUD */
+@media (max-width: 900px) {
+  .form-grid,
+  .form-grid-small {
+    grid-template-columns: 1fr;
+  }
+
+  .produto-venda-row {
+    grid-template-columns: 1fr 80px 120px 34px;
+  }
+}
+
+@media (max-width: 620px) {
+  .modal-backdrop {
+    padding: 14px;
+    align-items: flex-start;
+  }
+
+  .modal-card {
+    max-height: calc(100vh - 28px);
+  }
+
+  .modal-header,
+  .venda-form {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .produto-venda-row {
+    grid-template-columns: 1fr;
+  }
+
+  .btn-remove-item {
+    width: 100%;
+  }
+
+  .modal-footer {
+    flex-direction: column-reverse;
+  }
+
+  .modal-footer .btn-primary,
+  .modal-footer .btn-secondary,
+  .modal-footer .btn-danger {
+    width: 100%;
+  }
+}

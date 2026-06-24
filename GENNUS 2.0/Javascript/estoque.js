@@ -1,283 +1,542 @@
-/**
- * estoque.js — Controle de Estoque — Gennus
- * Dados simulados. Sem localStorage / backend.
- */
-'use strict';
+/* =========================================================
+   Gennus ERP — Estoque
+   JS enxuto, pronto para backend e seguro contra XSS básico.
 
-/* ---------- dados base ---------- */
-const CATS = ['Eletrônicos','Vestuário','Alimentos','Cosméticos','Casa','Ferramentas','Esportes','Outros'];
-const EMOJI = {Eletrônicos:'📱',Vestuário:'👕',Alimentos:'🥗',Cosméticos:'✨',Casa:'🏠',Ferramentas:'🔧',Esportes:'⚽',Outros:'📦'};
-const NOMES = {
-  Eletrônicos:['Smartphone Pro Max','Fone Bluetooth TWS','Carregador Turbo 65W','Mouse Ergonômico','Teclado Mecânico RGB','SSD Externo 1TB','Smartwatch Fitness','Webcam Full HD'],
-  Vestuário:['Camiseta Básica Preta','Calça Jeans Slim','Moletom Oversized','Tênis Running','Jaqueta Corta-Vento','Polo Listrada','Vestido Midi','Regata Academia'],
-  Alimentos:['Whey Protein 1kg','Barra Proteína Morango','Aveia em Flocos','Azeite Extra Virgem','Granola Sem Açúcar','Café Especial 250g','Mix de Castanhas','Mel Puro Silvestre'],
-  Cosméticos:['Sérum Vitamina C','Protetor Solar FPS50','Hidratante Facial','Shampoo Reconstrutor','Óleo de Argan','Base Líquida','Esfoliante Corporal','Perfume Floral'],
-  Casa:['Luminária LED Mesa','Organizador Bambu','Almofada Decorativa','Cesto de Vime','Vela Aromática','Tapete Antiderrapante','Espelho Redondo','Colcha Matelassê'],
-  Ferramentas:['Furadeira Impacto','Trena Digital','Jogo de Chaves','Alicate Universal','Serra Circular','Parafusadeira 12V','Lixa Elétrica','Caixa de Ferramentas'],
-  Esportes:['Bola Futsal Oficial','Raquete Beach Tennis','Corda de Pular','Luva de Boxe','Tapete de Yoga','Kettlebell 8kg','Mochila Esportiva','Garrafa Térmica'],
-  Outros:['Caixa Arquivo','Agenda Executiva','Calculadora Científica','Pasta L Ofício','Grampeador','Post-it Pack','Rolo Fita Crepe','Envelope Segurança'],
-};
+   Endpoints esperados:
+   GET  /api/estoque
+   POST /api/estoque/:id/reposicao
+   GET  /api/estoque/exportar
 
-let _seed = 99;
-const rand = () => { _seed = (_seed*1664525+1013904223)&0xffffffff; return (_seed>>>0)/0xffffffff; };
-const randInt = (a,b) => Math.floor(rand()*(b-a+1))+a;
+   Esta tela NÃO faz CRUD de produto.
+   Ela apenas lista, filtra, ordena, pagina, alerta e solicita reposição.
+========================================================= */
 
-function gerarDados() {
-  _seed = 99;
-  const itens = [];
-  CATS.forEach((cat, ci) => {
-    NOMES[cat].forEach((nome, i) => {
-      const estoqueMax = randInt(40, 220);
-      const estoqueMin = randInt(8, 25);
-      let estoque = randInt(0, estoqueMax);
-      // garante variedade de situações
-      const r = rand();
-      if (r < 0.12) estoque = 0;
-      else if (r < 0.25) estoque = randInt(1, estoqueMin - 1 || 1);
-      const custo = randInt(20, 600);
-      itens.push({
-        id: `PRD-${String(ci*8+i+1).padStart(5,'0')}`,
-        nome, categoria: cat,
-        estoque, estoqueMin, estoqueMax, custo,
-      });
+(() => {
+  "use strict";
+
+  /* Centralizar configs poupa linhas repetidas e facilita mudar depois. */
+  const API = "/api/estoque";
+  const PAGE_SIZE = 10;
+
+  /* Guardamos referências do DOM uma vez só. Mais eficiente que buscar toda hora. */
+  const $ = (id) => document.getElementById(id);
+
+  const dom = {
+    total: $("kpi-total"),
+    ok: $("kpi-ok"),
+    okSub: $("kpi-ok-sub"),
+    medio: $("kpi-medio"),
+    baixo: $("kpi-baixo"),
+    esgotado: $("kpi-esgotado"),
+
+    distBar: $("dist-bar"),
+    distLegend: $("dist-legend"),
+
+    search: $("search-input"),
+    clear: $("search-clear"),
+    pills: $("status-pills"),
+    ordem: $("select-ordem"),
+
+    count: $("table-count"),
+    tbody: $("est-tbody"),
+    empty: $("empty-state"),
+
+    prev: $("pag-prev"),
+    next: $("pag-next"),
+    pages: $("pag-pages"),
+    pagination: $("pagination"),
+
+    alertCount: $("alertas-count"),
+    alertList: $("alertas-list"),
+
+    export: $("btn-export")
+  };
+
+  /* Estado único da tela. Evita variáveis espalhadas. */
+  const state = {
+    produtos: [],
+    busca: "",
+    status: "todos",
+    ordem: "critico",
+    page: 1
+  };
+
+  const statusLabel = {
+    ok: "OK",
+    medio: "Médio",
+    baixo: "Baixo",
+    esgotado: "Esgotado"
+  };
+
+  const statusColor = {
+    ok: "var(--verde)",
+    medio: "#60a5fa",
+    baixo: "var(--amarelo)",
+    esgotado: "var(--vermelho)"
+  };
+
+  /* =========================================================
+     API
+     ---------------------------------------------------------
+     Fetch isolado deixa o código pronto para backend.
+     Outros programadores costumam espalhar fetch em eventos.
+     Isso vira bagunça quando precisa tratar token, erro ou header.
+  ========================================================= */
+
+  async function request(url, options = {}) {
+    const res = await fetch(url, {
+      credentials: "same-origin",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        ...options.headers
+      },
+      ...options
     });
-  });
-  return itens;
-}
 
-/* ---------- status ---------- */
-function calcStatus(p) {
-  if (p.estoque === 0) return 'esgotado';
-  if (p.estoque <= p.estoqueMin) return 'baixo';
-  if (p.estoque / p.estoqueMax <= 0.5) return 'medio';
-  return 'ok';
-}
-const STATUS_LABEL = {ok:'Estoque OK', medio:'Estoque Médio', baixo:'Estoque Baixo', esgotado:'Esgotado'};
-const STATUS_COLOR = {ok:'#22c55e', medio:'#60a5fa', baixo:'#fbbf24', esgotado:'#f87171'};
-const STATUS_ORDEM = {esgotado:0, baixo:1, medio:2, ok:3};
+    if (!res.ok) {
+      throw new Error(`Erro ${res.status}`);
+    }
 
-/* ---------- helpers ---------- */
-const fmtBRL = n => 'R$ ' + Math.round(n).toLocaleString('pt-BR');
-const fmtNum = n => Math.round(n).toLocaleString('pt-BR');
-function countUp(el, target, fmt, dur=600) {
-  if (!el) return;
-  const t0 = performance.now();
-  const go = now => { const p = Math.min((now-t0)/dur,1); el.textContent = fmt(target*(1-Math.pow(1-p,3))); if (p<1) requestAnimationFrame(go); };
-  requestAnimationFrame(go);
-}
+    return res.json();
+  }
 
-/* ---------- estado ---------- */
-const state = { todos: [], filtrados: [], search:'', status:'todos', ordem:'critico', pagina:1, porPagina:10 };
+  async function carregarEstoque() {
+    const data = await request(API);
 
-/* ---------- KPIs + distribuição ---------- */
-function renderResumo() {
-  const t = state.todos;
-  const porStatus = { ok:0, medio:0, baixo:0, esgotado:0 };
-  t.forEach(p => porStatus[calcStatus(p)]++);
+    /*
+      Normalizar evita quebrar a tela se o backend mandar número como string
+      ou algum campo vazio.
+    */
+    state.produtos = data.map((p) => ({
+      id: String(p.id ?? ""),
+      nome: String(p.nome ?? "Produto sem nome"),
+      categoria: String(p.categoria ?? "Sem categoria"),
+      icone: String(p.icone ?? "📦"),
+      estoqueAtual: toNumber(p.estoqueAtual),
+      estoqueMinimo: toNumber(p.estoqueMinimo),
+      capacidade: toNumber(p.capacidade),
+      valorUnitario: toNumber(p.valorUnitario)
+    }));
 
-  countUp(document.getElementById('kpi-total'), t.length, n=>fmtNum(n));
-  countUp(document.getElementById('kpi-ok'), porStatus.ok, n=>fmtNum(n));
-  countUp(document.getElementById('kpi-medio'), porStatus.medio, n=>fmtNum(n));
-  countUp(document.getElementById('kpi-baixo'), porStatus.baixo, n=>fmtNum(n));
-  countUp(document.getElementById('kpi-esgotado'), porStatus.esgotado, n=>fmtNum(n));
+    render();
+  }
 
-  document.getElementById('kpi-ok-sub').textContent = `${((porStatus.ok/(t.length||1))*100).toFixed(0)}% do catálogo`;
-  document.querySelector('.kpi-baixo').classList.toggle('alerta', porStatus.baixo > 0);
-  document.querySelector('.kpi-esgotado').classList.toggle('alerta', porStatus.esgotado > 0);
+  async function solicitarReposicao(id) {
+    const produto = state.produtos.find((p) => p.id === id);
+    if (!produto) return alert("Produto não encontrado.");
 
-  /* barra de distribuição */
-  const bar = document.getElementById('dist-bar');
-  const leg = document.getElementById('dist-legend');
-  if (bar && leg) {
-    bar.innerHTML = ''; leg.innerHTML = '';
-    ['ok','medio','baixo','esgotado'].forEach(s => {
-      const pct = (porStatus[s] / (t.length || 1)) * 100;
-      const seg = document.createElement('div');
-      seg.className = 'dist-seg';
-      seg.style.background = STATUS_COLOR[s];
-      bar.appendChild(seg);
-      requestAnimationFrame(() => requestAnimationFrame(() => { seg.style.width = pct + '%'; }));
+    const quantidade = reposicaoSugerida(produto);
+    if (quantidade <= 0) return alert("Este produto não precisa de reposição.");
 
-      leg.innerHTML += `<span class="dist-leg-item"><span class="dist-leg-dot" style="background:${STATUS_COLOR[s]}"></span>${STATUS_LABEL[s]}: <span class="dist-leg-val">${porStatus[s]}</span> (${pct.toFixed(0)}%)</span>`;
+    const ok = confirm(`Solicitar reposição de ${quantidade} un. para ${produto.nome}?`);
+    if (!ok) return;
+
+    /*
+      encodeURIComponent protege a URL caso o ID tenha caracteres especiais.
+      Exemplo: espaço, barra, acento etc.
+    */
+    await request(`${API}/${encodeURIComponent(id)}/reposicao`, {
+      method: "POST",
+      body: JSON.stringify({ quantidade })
     });
+
+    alert("Reposição solicitada com sucesso.");
   }
-}
 
-/* ---------- filtros ---------- */
-function aplicarFiltros() {
-  let r = [...state.todos];
-  if (state.search) {
-    const q = state.search.toLowerCase();
-    r = r.filter(p => p.nome.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || p.categoria.toLowerCase().includes(q));
+  /* =========================================================
+     Regras de negócio
+  ========================================================= */
+
+  function statusDoProduto(p) {
+    if (p.estoqueAtual === 0) return "esgotado";
+    if (p.estoqueAtual < p.estoqueMinimo) return "baixo";
+    if (percentual(p.estoqueAtual, p.capacidade) <= 50) return "medio";
+    return "ok";
   }
-  if (state.status !== 'todos') r = r.filter(p => calcStatus(p) === state.status);
 
-  r.sort((a,b) => {
-    if (state.ordem === 'critico') return STATUS_ORDEM[calcStatus(a)] - STATUS_ORDEM[calcStatus(b)] || a.estoque - b.estoque;
-    if (state.ordem === 'nome-asc') return a.nome.localeCompare(b.nome,'pt-BR');
-    if (state.ordem === 'estoque-asc') return a.estoque - b.estoque;
-    if (state.ordem === 'estoque-desc') return b.estoque - a.estoque;
-    if (state.ordem === 'valor-desc') return (b.estoque*b.custo) - (a.estoque*a.custo);
-    return 0;
-  });
+  function reposicaoSugerida(p) {
+    return Math.max(p.capacidade - p.estoqueAtual, 0);
+  }
 
-  state.filtrados = r;
-  state.pagina = 1;
-}
+  function valorEstoque(p) {
+    return p.estoqueAtual * p.valorUnitario;
+  }
 
-/* ---------- tabela ---------- */
-function renderTabela() {
-  const tbody = document.getElementById('est-tbody');
-  const countEl = document.getElementById('table-count');
-  const emptyEl = document.getElementById('empty-state');
-  if (!tbody) return;
+  function percentual(valor, total) {
+    if (!total) return 0;
+    return Math.min(Math.max((valor / total) * 100, 0), 100);
+  }
 
-  const total = state.filtrados.length;
-  const ini = (state.pagina-1)*state.porPagina;
-  const pagina = state.filtrados.slice(ini, ini+state.porPagina);
+  function resumo() {
+    return state.produtos.reduce(
+      (acc, p) => {
+        acc.total++;
+        acc[statusDoProduto(p)]++;
+        return acc;
+      },
+      { total: 0, ok: 0, medio: 0, baixo: 0, esgotado: 0 }
+    );
+  }
 
-  countEl.textContent = `${total.toLocaleString('pt-BR')} item${total!==1?'s':''}`;
-  emptyEl.style.display = total === 0 ? 'flex' : 'none';
-  tbody.innerHTML = '';
+  /* =========================================================
+     Filtro, ordenação e paginação
+  ========================================================= */
 
-  pagina.forEach((p) => {
-    const status = calcStatus(p);
-    const pct = Math.min((p.estoque/p.estoqueMax)*100, 100);
-    const minPct = Math.min((p.estoqueMin/p.estoqueMax)*100, 100);
-    const valor = p.estoque * p.custo;
+  function produtosFiltrados() {
+    const termo = normalize(state.busca);
 
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td><div class="prd-cell"><div class="prd-icon" style="background:rgba(168,85,247,.08)">${EMOJI[p.categoria]}</div><div class="prd-nome-wrap"><span class="prd-nome">${p.nome}</span><span class="prd-id">${p.id}</span></div></div></td>
-      <td><span class="cat-badge">${p.categoria}</span></td>
-      <td><span class="estoque-num">${p.estoque}</span><span class="estoque-unidade">/ ${p.estoqueMax}</span></td>
-      <td><div class="cap-cell"><span class="cap-pct" style="color:${STATUS_COLOR[status]}">${pct.toFixed(0)}%</span><div class="cap-bar"><div class="cap-fill" style="width:0%;background:${STATUS_COLOR[status]}"></div><div class="cap-min-mark" style="left:${minPct}%"></div></div></div></td>
-      <td class="ta-r"><span class="status-badge status-${status}">${STATUS_LABEL[status]}</span></td>
-      <td class="valor-estoque">${fmtBRL(valor)}</td>
-      <td class="ta-r">${status==='ok' ? '<button class="btn-repor" disabled>Repor</button>' : `<button class="btn-repor" data-id="${p.id}">Repor</button>`}</td>
+    return state.produtos
+      .filter((p) => {
+        const texto = normalize(`${p.id} ${p.nome} ${p.categoria}`);
+        const bateBusca = texto.includes(termo);
+        const bateStatus = state.status === "todos" || statusDoProduto(p) === state.status;
+
+        return bateBusca && bateStatus;
+      })
+      .sort(sorter());
+  }
+
+  function sorter() {
+    const peso = { esgotado: 1, baixo: 2, medio: 3, ok: 4 };
+
+    const sorters = {
+      critico: (a, b) => peso[statusDoProduto(a)] - peso[statusDoProduto(b)],
+      "nome-asc": (a, b) => a.nome.localeCompare(b.nome, "pt-BR"),
+      "estoque-asc": (a, b) => a.estoqueAtual - b.estoqueAtual,
+      "estoque-desc": (a, b) => b.estoqueAtual - a.estoqueAtual,
+      "valor-desc": (a, b) => valorEstoque(b) - valorEstoque(a)
+    };
+
+    return sorters[state.ordem] || sorters.critico;
+  }
+
+  function paginaAtual(lista) {
+    const start = (state.page - 1) * PAGE_SIZE;
+    return lista.slice(start, start + PAGE_SIZE);
+  }
+
+  /* =========================================================
+     Renderização
+     ---------------------------------------------------------
+     Uso innerHTML para ficar enxuto.
+     Mas todo dado externo passa por escapeHTML().
+     Assim evita o erro comum de jogar dado cru do backend na tela.
+  ========================================================= */
+
+  function render() {
+    const lista = produtosFiltrados();
+    const pagina = paginaAtual(lista);
+    const totalPages = Math.max(Math.ceil(lista.length / PAGE_SIZE), 1);
+
+    renderKPIs();
+    renderDistribuicao();
+    renderTabela(pagina, lista.length);
+    renderPaginacao(totalPages);
+    renderAlertas();
+    renderControles();
+  }
+
+  function renderKPIs() {
+    const r = resumo();
+
+    dom.total.textContent = r.total;
+    dom.ok.textContent = r.ok;
+    dom.medio.textContent = r.medio;
+    dom.baixo.textContent = r.baixo;
+    dom.esgotado.textContent = r.esgotado;
+    dom.okSub.textContent = `${Math.round(percentual(r.ok, r.total))}% do catálogo`;
+  }
+
+  function renderDistribuicao() {
+    const r = resumo();
+
+    const itens = [
+      ["ok", "Estoque OK", r.ok],
+      ["medio", "Estoque Médio", r.medio],
+      ["baixo", "Estoque Baixo", r.baixo],
+      ["esgotado", "Esgotado", r.esgotado]
+    ];
+
+    dom.distBar.innerHTML = itens
+      .map(([status, label, valor]) => {
+        const pct = Math.round(percentual(valor, r.total));
+        return `<div class="dist-seg" title="${label}: ${valor} (${pct}%)" style="width:${pct}%;background:${statusColor[status]}"></div>`;
+      })
+      .join("");
+
+    dom.distLegend.innerHTML = itens
+      .map(([status, label, valor]) => {
+        const pct = Math.round(percentual(valor, r.total));
+        return `
+          <div class="dist-leg-item">
+            <span class="dist-leg-dot" style="background:${statusColor[status]}"></span>
+            <span>${label}:</span>
+            <span class="dist-leg-val">${valor} (${pct}%)</span>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  function renderTabela(lista, total) {
+    dom.count.textContent = `${total} ${total === 1 ? "item" : "itens"}`;
+    dom.empty.style.display = total ? "none" : "flex";
+    dom.pagination.style.display = total > PAGE_SIZE ? "flex" : "none";
+
+    dom.tbody.innerHTML = lista.map(rowHTML).join("");
+  }
+
+  function rowHTML(p) {
+    const status = statusDoProduto(p);
+    const pct = Math.round(percentual(p.estoqueAtual, p.capacidade));
+    const min = Math.round(percentual(p.estoqueMinimo, p.capacidade));
+    const precisaRepor = status === "baixo" || status === "esgotado";
+
+    return `
+      <tr>
+        <td>
+          <div class="prd-cell">
+            <div class="prd-icon">${escapeHTML(p.icone)}</div>
+            <div class="prd-nome-wrap">
+              <span class="prd-nome">${escapeHTML(p.nome)}</span>
+              <span class="prd-id">${escapeHTML(p.id)}</span>
+            </div>
+          </div>
+        </td>
+
+        <td><span class="cat-badge">${escapeHTML(p.categoria)}</span></td>
+
+        <td>
+          <span class="estoque-num">${p.estoqueAtual}</span>
+          <span class="estoque-unidade">/ ${p.capacidade}</span>
+        </td>
+
+        <td class="ta-r">
+          <div class="cap-cell">
+            <span class="cap-pct" style="color:${statusColor[status]}">${pct}%</span>
+            <div class="cap-bar">
+              <div class="cap-fill" style="width:${pct}%;background:${statusColor[status]}"></div>
+              <span class="cap-min-mark" style="left:${min}%"></span>
+            </div>
+          </div>
+        </td>
+
+        <td class="ta-r">
+          <span class="status-badge status-${status}">${statusLabel[status]}</span>
+        </td>
+
+        <td class="valor-estoque">${money(valorEstoque(p))}</td>
+
+        <td class="ta-r">
+          <button 
+            class="btn-repor" 
+            data-repor="${escapeHTML(p.id)}"
+            ${precisaRepor ? "" : "disabled"}>
+            Repor
+          </button>
+        </td>
+      </tr>
     `;
-    tbody.appendChild(tr);
-
-    const fill = tr.querySelector('.cap-fill');
-    requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = pct + '%'; }));
-  });
-
-  tbody.querySelectorAll('.btn-repor[data-id]').forEach(btn => {
-    btn.addEventListener('click', () => marcarReposto(btn.dataset.id, btn));
-  });
-
-  renderPaginacao();
-}
-
-function marcarReposto(id, btn) {
-  const item = state.todos.find(p => p.id === id);
-  if (!item) return;
-  item.estoque = item.estoqueMax;
-  btn.textContent = '✓ Reposto';
-  btn.classList.add('done');
-  btn.disabled = true;
-  setTimeout(() => { renderResumo(); aplicarFiltros(); renderTabela(); renderAlertas(); }, 700);
-}
-
-/* ---------- paginação ---------- */
-function renderPaginacao() {
-  const total = state.filtrados.length;
-  const pages = Math.ceil(total / state.porPagina);
-  const atual = state.pagina;
-  const prev = document.getElementById('pag-prev'), next = document.getElementById('pag-next');
-  const pEl = document.getElementById('pag-pages'), pagEl = document.getElementById('pagination');
-
-  pagEl.style.display = pages <= 1 ? 'none' : 'flex';
-  prev.disabled = atual === 1;
-  next.disabled = atual === pages || pages === 0;
-  pEl.innerHTML = '';
-
-  let ini = Math.max(1, atual-2), fim = Math.min(pages, ini+4);
-  if (fim-ini < 4) ini = Math.max(1, fim-4);
-  for (let pg = ini; pg <= fim; pg++) {
-    const b = document.createElement('button');
-    b.className = 'pag-num' + (pg===atual?' active':'');
-    b.textContent = pg;
-    b.addEventListener('click', () => { state.pagina = pg; renderTabela(); });
-    pEl.appendChild(b);
-  }
-}
-
-/* ---------- alertas de reposição ---------- */
-function renderAlertas() {
-  const list = document.getElementById('alertas-list');
-  const count = document.getElementById('alertas-count');
-  if (!list) return;
-
-  const criticos = state.todos
-    .filter(p => calcStatus(p) === 'baixo' || calcStatus(p) === 'esgotado')
-    .sort((a,b) => STATUS_ORDEM[calcStatus(a)] - STATUS_ORDEM[calcStatus(b)] || a.estoque - b.estoque)
-    .slice(0, 12);
-
-  count.textContent = `${criticos.length} pendente${criticos.length!==1?'s':''}`;
-
-  if (!criticos.length) {
-    list.innerHTML = '<div class="alertas-empty">✓ Nenhum alerta — estoque sob controle.</div>';
-    return;
   }
 
-  list.innerHTML = criticos.map(p => {
-    const status = calcStatus(p);
-    const sugestao = p.estoqueMax - p.estoque;
+  function renderPaginacao(totalPages) {
+    dom.prev.disabled = state.page <= 1;
+    dom.next.disabled = state.page >= totalPages;
+
+    dom.pages.innerHTML = Array.from({ length: totalPages }, (_, i) => {
+      const page = i + 1;
+      return `
+        <button class="pag-num ${page === state.page ? "active" : ""}" data-page="${page}">
+          ${page}
+        </button>
+      `;
+    }).join("");
+  }
+
+  function renderAlertas() {
+    const alertas = state.produtos
+      .filter((p) => ["baixo", "esgotado"].includes(statusDoProduto(p)))
+      .sort((a, b) => reposicaoSugerida(b) - reposicaoSugerida(a));
+
+    dom.alertCount.textContent = `${alertas.length} ${alertas.length === 1 ? "pendente" : "pendentes"}`;
+
+    dom.alertList.innerHTML = alertas.length
+      ? alertas.map(alertaHTML).join("")
+      : `<div class="alertas-empty">Nenhum alerta de reposição.</div>`;
+  }
+
+  function alertaHTML(p) {
+    const status = statusDoProduto(p);
+
     return `
       <div class="alerta-item">
         <div class="alerta-top">
           <div>
-            <div class="alerta-nome">${EMOJI[p.categoria]} ${p.nome}</div>
-            <div class="alerta-meta">${p.id} · atual: ${p.estoque} / mín: ${p.estoqueMin}</div>
+            <div class="alerta-nome">${escapeHTML(p.icone)} ${escapeHTML(p.nome)}</div>
+            <div class="alerta-meta">
+              ${escapeHTML(p.id)} · atual: ${p.estoqueAtual} / mín: ${p.estoqueMinimo}
+            </div>
           </div>
-          <span class="status-badge status-${status}">${STATUS_LABEL[status]}</span>
+
+          <span class="status-badge status-${status}">
+            ${statusLabel[status]}
+          </span>
         </div>
+
         <div class="alerta-sugestao">
           <span>Reposição sugerida</span>
-          <strong>+${sugestao} un.</strong>
+          <strong>+${reposicaoSugerida(p)} un.</strong>
         </div>
-      </div>`;
-  }).join('');
-}
+      </div>
+    `;
+  }
 
-/* ---------- eventos ---------- */
-function initEventos() {
-  const inp = document.getElementById('search-input'), clr = document.getElementById('search-clear');
-  inp.addEventListener('input', () => {
-    state.search = inp.value.trim();
-    clr.style.display = state.search ? 'block' : 'none';
-    aplicarFiltros(); renderTabela();
+  function renderControles() {
+    dom.clear.style.display = state.busca ? "block" : "none";
+
+    dom.pills.querySelectorAll("[data-status]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.status === state.status);
+    });
+
+    dom.ordem.value = state.ordem;
+  }
+
+  /* =========================================================
+     Eventos
+     ---------------------------------------------------------
+     Event delegation poupa linhas e memória.
+     Em vez de evento em cada botão Repor/Página,
+     usamos um evento no pai.
+  ========================================================= */
+
+  dom.search.addEventListener("input", debounce((e) => {
+    state.busca = e.target.value;
+    state.page = 1;
+    render();
+  }, 250));
+
+  dom.clear.addEventListener("click", () => {
+    state.busca = "";
+    state.page = 1;
+    dom.search.value = "";
+    dom.search.focus();
+    render();
   });
-  clr.addEventListener('click', () => { inp.value=''; state.search=''; clr.style.display='none'; inp.focus(); aplicarFiltros(); renderTabela(); });
 
-  document.getElementById('status-pills').addEventListener('click', e => {
-    const pill = e.target.closest('.pill'); if (!pill) return;
-    document.querySelectorAll('#status-pills .pill').forEach(p=>p.classList.remove('active'));
-    pill.classList.add('active');
-    state.status = pill.dataset.status;
-    aplicarFiltros(); renderTabela();
+  dom.pills.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-status]");
+    if (!btn) return;
+
+    state.status = btn.dataset.status;
+    state.page = 1;
+    render();
   });
 
-  document.getElementById('select-ordem').addEventListener('change', e => { state.ordem = e.target.value; aplicarFiltros(); renderTabela(); });
-
-  document.getElementById('pag-prev').addEventListener('click', () => { if (state.pagina>1) { state.pagina--; renderTabela(); } });
-  document.getElementById('pag-next').addEventListener('click', () => { const max=Math.ceil(state.filtrados.length/state.porPagina); if (state.pagina<max) { state.pagina++; renderTabela(); } });
-
-  document.getElementById('btn-export').addEventListener('click', () => {
-    const btn = document.getElementById('btn-export'), orig = btn.innerHTML;
-    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="animation:spin .8s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Exportando…';
-    btn.disabled = true;
-    setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 1600);
+  dom.ordem.addEventListener("change", (e) => {
+    state.ordem = e.target.value;
+    state.page = 1;
+    render();
   });
-}
 
-/* ---------- init ---------- */
-document.addEventListener('DOMContentLoaded', () => {
-  state.todos = gerarDados();
-  aplicarFiltros();
-  renderResumo();
-  renderTabela();
-  renderAlertas();
-  initEventos();
-});
+  dom.prev.addEventListener("click", () => {
+    if (state.page > 1) {
+      state.page--;
+      render();
+    }
+  });
+
+  dom.next.addEventListener("click", () => {
+    const totalPages = Math.ceil(produtosFiltrados().length / PAGE_SIZE);
+    if (state.page < totalPages) {
+      state.page++;
+      render();
+    }
+  });
+
+  dom.pages.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-page]");
+    if (!btn) return;
+
+    state.page = Number(btn.dataset.page);
+    render();
+  });
+
+  dom.tbody.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-repor]");
+    if (!btn) return;
+
+    try {
+      btn.disabled = true;
+      btn.textContent = "Enviando";
+      await solicitarReposicao(btn.dataset.repor);
+      await carregarEstoque();
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao solicitar reposição.");
+      btn.disabled = false;
+      btn.textContent = "Repor";
+    }
+  });
+
+  dom.export.addEventListener("click", () => {
+    /*
+      Mais enxuto: deixa o backend gerar o arquivo.
+      Isso evita CSV pesado no front e centraliza regra no servidor.
+    */
+    window.location.href = `${API}/exportar`;
+  });
+
+  /* =========================================================
+     Helpers
+  ========================================================= */
+
+  function escapeHTML(value) {
+    /*
+      Protege contra XSS.
+      Transforma <script> em texto comum, não em código executável.
+    */
+    return String(value).replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    }[char]));
+  }
+
+  function normalize(value) {
+    return String(value)
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+  }
+
+  function toNumber(value) {
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  }
+
+  function money(value) {
+    return value.toLocaleString("pt-BR", {
+      style: "currency",
+      currency: "BRL"
+    });
+  }
+
+  function debounce(fn, delay = 300) {
+    let timer;
+
+    return (...args) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), delay);
+    };
+  }
+
+  /* Inicialização */
+  carregarEstoque().catch((err) => {
+    console.error(err);
+    alert("Erro ao carregar estoque. Verifique o backend.");
+  });
+})();
